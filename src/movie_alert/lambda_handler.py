@@ -56,7 +56,7 @@ def _handle(event: dict[str, Any], context: LambdaContext, started: float) -> di
     if not isinstance(event, dict):
         raise ConfigError("Lambda 이벤트는 객체여야 합니다.")
     notify = event.get("notify", False)
-    checks = event.get("checks", 2)
+    checks = event.get("checks", 1)
     if type(notify) is not bool or type(checks) is not int or checks not in (1, 2):
         raise ConfigError("notify는 bool, checks는 1 또는 2여야 합니다.")
     now = current_time()

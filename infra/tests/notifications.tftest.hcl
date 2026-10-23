@@ -104,7 +104,7 @@ run "scheduled_checker_contract" {
     error_message = "Do not queue repeated polls after transient failures."
   }
   assert {
-    condition     = strcontains(one(aws_scheduler_schedule.checker[0].target).input, "<aws.scheduler.scheduled-time>") && jsondecode(one(aws_scheduler_schedule.checker[0].target).input).notify
+    condition     = strcontains(one(aws_scheduler_schedule.checker[0].target).input, "<aws.scheduler.scheduled-time>") && jsondecode(one(aws_scheduler_schedule.checker[0].target).input).notify && jsondecode(one(aws_scheduler_schedule.checker[0].target).input).checks == 1
     error_message = "Scheduler context substitution requires a literal, unescaped placeholder in valid JSON."
   }
 }

@@ -52,6 +52,13 @@ def runtime(monkeypatch, config):
     return query, send, environment
 
 
+def test_default_checks_once_without_waiting(context, clock, runtime):
+    result = entry.handler({}, context)
+    assert len(result["checks"]) == 1
+    runtime[0].assert_called_once()
+    assert clock[0] == 0
+
+
 def test_two_checks_start_thirty_seconds_apart(context, clock, runtime):
     query, send, environment = runtime
     starts = []
@@ -62,7 +69,7 @@ def test_two_checks_start_thirty_seconds_apart(context, clock, runtime):
         return [], []
 
     query.side_effect = fetch
-    result = entry.handler({}, context)
+    result = entry.handler({"checks": 2}, context)
     assert starts == [0, 30]
     assert result["status"] == "ok"
     assert len(result["checks"]) == 2
@@ -88,7 +95,7 @@ def test_slow_first_check_skips_second_when_budget_is_short(context, clock, runt
         return [], []
 
     query.side_effect = fetch
-    assert len(entry.handler({}, context)["checks"]) == 1
+    assert len(entry.handler({"checks": 2}, context)["checks"]) == 1
     assert query.call_count == 1
 
 
@@ -97,7 +104,7 @@ def test_period_ends_before_second_check(context, runtime, config, monkeypatch):
         replace(rule, active_until=NOW + timedelta(seconds=20)) for rule in config.watches
     )
     monkeypatch.setattr(entry, "load_config", lambda path: replace(config, watches=rules))
-    result = entry.handler({}, context)
+    result = entry.handler({"checks": 2}, context)
     assert len(result["checks"]) == 1
     assert runtime[0].call_count == 1
 

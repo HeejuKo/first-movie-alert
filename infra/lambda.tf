@@ -132,7 +132,7 @@ resource "aws_scheduler_schedule" "checker" {
     role_arn = aws_iam_role.scheduler[0].arn
     # jsonencode escapes angle brackets, preventing Scheduler substitution.
     input = <<-JSON
-      {"notify":true,"checks":2,"scheduled_at":"<aws.scheduler.scheduled-time>"}
+      {"notify":true,"checks":1,"scheduled_at":"<aws.scheduler.scheduled-time>"}
     JSON
     retry_policy {
       maximum_event_age_in_seconds = 60

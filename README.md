@@ -142,7 +142,7 @@ AWS_PROFILE=movie-alert uv run --locked --extra console-login --env-file .env mo
 
 ## AWS 자동 실행
 
-Lambda 핸들러는 `movie_alert.lambda_handler.handler`다. Scheduler의 1분 호출 안에서 즉시 한 번, 시작 약 30초 후 한 번 조회한다. 실제 간격은 Scheduler 정밀도·조회 시간·남은 실행 시간에 영향을 받는다. 예매 상태 판정·중복 키·Discord 전송 정책은 CLI와 같다. 명시적인 `notify: true` 이벤트에서만 실제 전송하며 기본 이벤트는 미리보기다.
+Lambda 핸들러는 `movie_alert.lambda_handler.handler`다. Scheduler가 매분 호출하고 각 실행에서 한 번 조회한다. 추가 30초 대기는 없다. 실제 간격은 Scheduler 정밀도·조회 시간에 영향을 받는다. 예매 상태 판정·중복 키·Discord 전송 정책은 CLI와 같다. 명시적인 `notify: true` 이벤트에서만 실제 전송하며 기본 이벤트는 미리보기다.
 
 ```bash
 uv run --locked python scripts/build_lambda.py
