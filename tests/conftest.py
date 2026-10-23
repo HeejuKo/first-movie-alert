@@ -1,5 +1,4 @@
 import json
-import re
 from pathlib import Path
 
 import httpx
@@ -26,9 +25,12 @@ def payload():
 
 @pytest.fixture
 def config_text():
-    # Legacy multi-watch tests exercise the configuration without optional selection.
-    text = (ROOT / "config/watch.example.toml").read_text()
-    return re.sub(r"(?ms)^\[selection\]\n.*?(?=^\[|\Z)", "", text)
+    return (ROOT / "tests/fixtures/watch.test.toml").read_text()
+
+
+@pytest.fixture
+def selection_text(config_text):
+    return "[selection]\nbranch_index = 3\ndate_index = 0\n\n" + config_text
 
 
 @pytest.fixture

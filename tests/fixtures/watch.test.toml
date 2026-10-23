@@ -1,0 +1,52 @@
+# Synthetic watch configuration for deterministic tests, independent of local selections.
+[cgv]
+co_cd = "A420"
+rtctl_scop_cd = "08"
+source = "mcp_relay"
+relay_base_url = "https://mcp.aka.page"
+
+[http]
+timeout_seconds = 10.0
+max_retries = 0
+retry_delay_seconds = 0.5
+max_parallel_requests = 3
+
+[watch_defaults]
+dates = ["2026-10-28", "2026-10-31", "2026-11-04", "2026-11-07"]
+provider = "cgv"
+movie_name = "극장판 치이카와-인어 섬의 비밀"
+movie_id = "30001367"
+session_policy = "earliest"
+enabled = true
+active_from = 2026-10-21T00:00:00+09:00
+active_until = 2026-11-08T00:00:00+09:00
+
+[[watches]]
+name = "치이카와-강남"
+branch_name = "CGV 강남"
+branch_id = "0056"
+
+[[watches]]
+name = "치이카와-강변"
+branch_name = "CGV 강변"
+branch_id = "0001"
+
+[[watches]]
+name = "치이카와-성신여대입구"
+branch_name = "CGV 성신여대입구"
+branch_id = "0300"
+
+[[watches]]
+name = "치이카와-수유"
+branch_name = "CGV 수유"
+branch_id = "0276"
+
+[[watches]]
+name = "치이카와-연남"
+branch_name = "CGV 연남"
+branch_id = "0292"
+
+[[watches]]
+name = "치이카와-홍대"
+branch_name = "CGV 홍대"
+branch_id = "0191"
