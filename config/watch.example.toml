@@ -9,8 +9,9 @@ relay_base_url = "https://mcp.aka.page"
 
 [http]
 timeout_seconds = 10.0
-max_retries = 1
+max_retries = 0
 retry_delay_seconds = 0.5
+max_parallel_requests = 3
 
 # 이 날짜 목록을 바꾸면 아래 모든 등록 지점에 적용된다.
 # 지정한 날짜만 조회한다. weekdays를 생략하면 요일 제한을 두지 않는다.

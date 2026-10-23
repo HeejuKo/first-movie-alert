@@ -1,4 +1,5 @@
 import json
+import threading
 from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
@@ -8,7 +9,12 @@ import pytest
 from movie_alert.config import ConfigError, load_config
 from movie_alert.main import main, run_live
 from movie_alert.models import SEOUL
-from movie_alert.providers.base import AccessDeniedError, ProviderError, RateLimitError
+from movie_alert.providers.base import (
+    AccessDeniedError,
+    ProviderError,
+    ProviderUnavailableError,
+    RateLimitError,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "config/watch.example.toml"
@@ -26,7 +32,8 @@ EXAMPLE = ROOT / "config/watch.example.toml"
         ("[watch_defaults]", "[[watch_defaults]]"),
         ("2026-10-28", "2026-02-30"),
         ("active_until = 2026-11-08T00:00:00+09:00", "active_until = 2026-11-08T00:00:00"),
-        ("max_retries = 1", "max_retries = 50"),
+        ("max_retries = 0", "max_retries = 50"),
+        ("max_parallel_requests = 3", "max_parallel_requests = 7"),
         ("timeout_seconds = 10.0", "timeout_seconds = nan"),
         ('provider = "cgv"', 'provider = "lotte"'),
         ('source = "mcp_relay"', 'source = "unknown"'),
@@ -137,20 +144,31 @@ def test_date_first_query_skips_rules_without_that_date(config, showtimes):
 
     provider = ProviderWithRows([])
     run_live(config, provider, datetime(2026, 10, 22, tzinfo=SEOUL))
-    assert [call[1:] for call in provider.calls] == [
-        ("0056", date(2026, 10, 24)),
-        ("0001", date(2026, 10, 28)),
-        ("0300", date(2026, 10, 28)),
-        ("0276", date(2026, 10, 28)),
-        ("0292", date(2026, 10, 28)),
-        ("0191", date(2026, 10, 28)),
-    ]
+    assert provider.calls[0][1:] == ("0056", date(2026, 10, 24))
+    assert {call[1:] for call in provider.calls[1:]} == {
+        (branch_id, date(2026, 10, 28)) for branch_id in ("0001", "0300", "0276", "0292", "0191")
+    }
 
 
 def test_config_selects_public_cgv_relay():
     config = load_config(EXAMPLE)
     assert config.cgv.source == "mcp_relay"
     assert config.cgv.relay_base_url == "https://mcp.aka.page"
+    assert config.http.max_parallel_requests == 3
+
+
+def test_same_date_branches_are_queried_in_bounded_parallel(config):
+    barrier = threading.Barrier(config.http.max_parallel_requests)
+
+    class ConcurrentProvider(FakeProvider):
+        def fetch_showtimes(self, movie_id, branch_id, show_date):
+            self.calls.append((movie_id, branch_id, show_date))
+            barrier.wait(timeout=2)
+            return []
+
+    provider = ConcurrentProvider([])
+    assert run_live(config, provider, datetime(2026, 10, 22, tzinfo=SEOUL)) == ([], [])
+    assert len(provider.calls) == len(config.watches)
 
 
 def test_unselected_date_in_saved_response_is_excluded(tmp_path, capsys):
@@ -214,7 +232,27 @@ def test_access_restriction_stops_remaining_queries(config, error_type):
     selected, errors = run_live(config, provider, datetime(2026, 10, 21, tzinfo=SEOUL))
     assert selected == []
     assert len(errors) == 1
-    assert len(provider.calls) == 1
+    assert 1 <= len(provider.calls) <= config.http.max_parallel_requests
+
+
+def test_relay_outage_stops_remaining_branches_and_later_dates(config):
+    later = date(2026, 10, 28)
+    config = replace(
+        config,
+        watches=tuple(replace(rule, dates=(date(2026, 10, 24), later)) for rule in config.watches),
+    )
+
+    class UnavailableProvider(FakeProvider):
+        def fetch_showtimes(self, movie_id, branch_id, show_date):
+            self.calls.append((movie_id, branch_id, show_date))
+            raise ProviderUnavailableError("synthetic relay outage")
+
+    provider = UnavailableProvider([])
+    selected, errors = run_live(config, provider, datetime(2026, 10, 22, tzinfo=SEOUL))
+    assert selected == []
+    assert len(errors) == 1
+    assert 1 <= len(provider.calls) <= config.http.max_parallel_requests
+    assert {call[2] for call in provider.calls} == {date(2026, 10, 24)}
 
 
 @pytest.mark.parametrize(

@@ -20,6 +20,7 @@ class HttpSettings:
     timeout_seconds: float = 10.0
     max_retries: int = 1
     retry_delay_seconds: float = 0.5
+    max_parallel_requests: int = 3
 
 
 @dataclass(frozen=True)
@@ -156,6 +157,7 @@ def load_config(path: Path) -> AppConfig:
     timeout = http.get("timeout_seconds", 10.0)
     retries = http.get("max_retries", 1)
     delay = http.get("retry_delay_seconds", 0.5)
+    parallel_requests = http.get("max_parallel_requests", 3)
     for name, value, lower, upper in [
         ("timeout_seconds", timeout, 0.1, 60),
         ("retry_delay_seconds", delay, 0, 5),
@@ -168,6 +170,8 @@ def load_config(path: Path) -> AppConfig:
             raise ConfigError(f"{name}: {lower}~{upper} 범위의 숫자가 필요합니다.")
     if type(retries) is not int or not 0 <= retries <= 2:
         raise ConfigError("max_retries: 0~2 사이의 정수가 필요합니다.")
+    if type(parallel_requests) is not int or not 1 <= parallel_requests <= 6:
+        raise ConfigError("max_parallel_requests: 1~6 사이의 정수가 필요합니다.")
     rules = tuple(_rule({**defaults, **rule}) for rule in watches)
     if len({rule.name for rule in rules}) != len(rules):
         raise ConfigError("각 watch의 name은 고유해야 합니다.")
@@ -181,6 +185,11 @@ def load_config(path: Path) -> AppConfig:
             source=source,
             relay_base_url=_url(cgv, "relay_base_url", "https://mcp.aka.page"),
         ),
-        http=HttpSettings(float(timeout), retries, float(delay)),
+        http=HttpSettings(
+            timeout_seconds=float(timeout),
+            max_retries=retries,
+            retry_delay_seconds=float(delay),
+            max_parallel_requests=parallel_requests,
+        ),
         watches=rules,
     )

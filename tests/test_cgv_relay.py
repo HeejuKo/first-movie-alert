@@ -5,7 +5,10 @@ import pytest
 
 from movie_alert.config import CgvSettings, HttpSettings
 from movie_alert.models import BookingStatus
-from movie_alert.providers.base import ProviderError, ResponseValidationError
+from movie_alert.providers.base import (
+    ProviderUnavailableError,
+    ResponseValidationError,
+)
 from movie_alert.providers.cgv_relay import CgvRelayProvider, parse_relay_schedule
 
 
@@ -166,7 +169,7 @@ def test_relay_502_remains_error_when_movie_is_listed():
             CgvSettings("A420", "08", source="mcp_relay"),
             HttpSettings(max_retries=0),
         )
-        with pytest.raises(ProviderError, match="HTTP 502"):
+        with pytest.raises(ProviderUnavailableError, match="HTTP 502"):
             provider.fetch_showtimes("30001367", "0056", date(2026, 10, 24))
 
 
@@ -177,5 +180,19 @@ def test_relay_provider_does_not_hide_upstream_error():
             CgvSettings("A420", "08", source="mcp_relay"),
             HttpSettings(max_retries=0),
         )
-        with pytest.raises(ProviderError, match="HTTP 502"):
+        with pytest.raises(ProviderUnavailableError, match="HTTP 502"):
+            provider.fetch_showtimes("30001367", "0056", date(2026, 10, 24))
+
+
+def test_relay_network_failure_is_service_outage():
+    def handler(request):
+        raise httpx.ConnectError("synthetic connection failure", request=request)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        provider = CgvRelayProvider(
+            client,
+            CgvSettings("A420", "08", source="mcp_relay"),
+            HttpSettings(max_retries=0),
+        )
+        with pytest.raises(ProviderUnavailableError, match="연결에 실패"):
             provider.fetch_showtimes("30001367", "0056", date(2026, 10, 24))

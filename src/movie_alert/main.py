@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import math
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from datetime import date, datetime
 from pathlib import Path
@@ -21,7 +22,13 @@ from movie_alert.pipeline import (
     notification_preview,
     showtime_key,
 )
-from movie_alert.providers.base import AccessDeniedError, Provider, ProviderError, RateLimitError
+from movie_alert.providers.base import (
+    AccessDeniedError,
+    Provider,
+    ProviderError,
+    ProviderUnavailableError,
+    RateLimitError,
+)
 from movie_alert.providers.cgv import CgvProvider, parse_schedule
 from movie_alert.providers.cgv_relay import CgvRelayProvider
 from movie_alert.runtime import (
@@ -37,6 +44,18 @@ def create_provider(config: AppConfig, client: httpx.Client) -> Provider:
     if config.cgv.source == "mcp_relay":
         return CgvRelayProvider(client, config.cgv, config.http)
     return CgvProvider(client, config.cgv, config.http)
+
+
+def _fetch_showtimes(provider: Provider, rule: WatchRule, show_date: date) -> list[Showtime]:
+    logger.info("상영표 조회 중: %s · %s", rule.branch_name, show_date)
+    rows = provider.fetch_showtimes(rule.movie_id, rule.branch_id, show_date)
+    logger.info(
+        "상영표 조회 완료: %s · %s (%d회차)",
+        rule.branch_name,
+        show_date,
+        len(rows),
+    )
+    return rows
 
 
 def run_live(
@@ -64,39 +83,52 @@ def run_live(
         if not date_rules:
             continue
 
-        fetched_by_rule: list[tuple[WatchRule, list[Showtime]]] = []
+        fetched_by_rule: dict[int, tuple[WatchRule, list[Showtime]]] = {}
         date_had_error = False
-        for rule in date_rules:
-            try:
-                logger.info("상영표 조회 중: %s · %s", rule.branch_name, show_date)
-                fetched = provider.fetch_showtimes(rule.movie_id, rule.branch_id, show_date)
-                fetched_by_rule.append((rule, fetched))
-                logger.info(
-                    "상영표 조회 완료: %s · %s (%d회차)",
-                    rule.branch_name,
-                    show_date,
-                    len(fetched),
-                )
-            except (AccessDeniedError, RateLimitError) as error:
-                message = f"{rule.name} {show_date}: {error}"
-                logger.error("%s", message)
-                errors.append(message)
-                for completed_rule, rows in fetched_by_rule:
+
+        parallel = config.http.max_parallel_requests
+        for batch_start in range(0, len(date_rules), parallel):
+            batch = list(enumerate(date_rules[batch_start : batch_start + parallel], batch_start))
+            stop_queries = False
+            with ThreadPoolExecutor(max_workers=len(batch)) as executor:
+                futures = {
+                    executor.submit(_fetch_showtimes, provider, rule, show_date): (index, rule)
+                    for index, rule in batch
+                }
+                for future in as_completed(futures):
+                    index, rule = futures[future]
+                    try:
+                        fetched_by_rule[index] = (rule, future.result())
+                    except (
+                        AccessDeniedError,
+                        ProviderUnavailableError,
+                        RateLimitError,
+                    ) as error:
+                        message = f"{rule.name} {show_date}: {error}"
+                        logger.error("%s", message)
+                        errors.append(message)
+                        stop_queries = True
+                        for pending in futures:
+                            pending.cancel()
+                        break
+                    except ProviderError as error:
+                        message = f"{rule.name} {show_date}: {error}"
+                        logger.error("%s", message)
+                        errors.append(message)
+                        date_had_error = True
+            if stop_queries:
+                for _, (completed_rule, rows) in sorted(fetched_by_rule.items()):
                     results.extend(select_first_showtimes(rows, completed_rule))
                 return results, errors
-            except ProviderError as error:
-                message = f"{rule.name} {show_date}: {error}"
-                logger.error("%s", message)
-                errors.append(message)
-                date_had_error = True
 
-        for completed_rule, rows in fetched_by_rule:
+        ordered_rows = [item for _, item in sorted(fetched_by_rule.items())]
+        for completed_rule, rows in ordered_rows:
             results.extend(select_first_showtimes(rows, completed_rule))
 
         if (
             not date_had_error
             and len(fetched_by_rule) == len(date_rules)
-            and all(not rows for _, rows in fetched_by_rule)
+            and all(not rows for _, rows in ordered_rows)
         ):
             logger.info("%s: 모든 지점에 시간표가 없어 이후 날짜 조회를 중단합니다.", show_date)
             break
