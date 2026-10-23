@@ -25,6 +25,12 @@ def main() -> None:
         level = "error" if diagnostic["severity"] == "error" else "warning"
         print(f"::{level} title=Terraform validate::{escaped}")
     if result.returncode or data.get("valid") is not True:
+        message = (
+            f"exit={result.returncode}, valid={data.get('valid')}, "
+            f"diagnostics={len(data.get('diagnostics', []))}; {result.stderr.strip()}"
+        )
+        escaped = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print(f"::error title=Terraform validation process::{escaped}")
         raise SystemExit(result.returncode or 1)
     print("Terraform validation passed.")
 
