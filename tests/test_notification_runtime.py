@@ -164,6 +164,9 @@ def test_cli_defaults_to_preview_even_for_synthetic_available_results(
     assert output["notifications"]["mode"] == "preview"
     assert output["notifications"]["outcomes"] == []
     assert output["notifications"]["previews"][0]["eligible"] is True
+    assert "screen_id" not in output["first_showtimes"][0]
+    assert "screen_name" not in output["first_showtimes"][0]
+    assert "상영관:" not in output["notifications"]["previews"][0]["content"]
     factory.assert_not_called()
 
 

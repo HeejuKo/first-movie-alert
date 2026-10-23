@@ -226,7 +226,14 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(
             {
                 "mode": "offline" if args.response else "live",
-                "first_showtimes": [asdict(row) for row in selected],
+                "first_showtimes": [
+                    {
+                        key: value
+                        for key, value in asdict(row).items()
+                        if key not in {"screen_id", "screen_name"}
+                    }
+                    for row in selected
+                ],
                 "errors": errors,
                 "notifications": {
                     "mode": "live" if args.notify else "preview",

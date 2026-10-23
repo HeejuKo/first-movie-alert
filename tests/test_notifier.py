@@ -46,7 +46,8 @@ def test_send_confirms_message_and_disables_mentions(available_showtime):
     assert payload["allowed_mentions"] == {"parse": []}
     assert "2026-10-24 10:00 (Asia/Seoul)" in payload["content"]
     assert "강남" in payload["content"]
-    assert "3관" in payload["content"]
+    assert "상영관:" not in payload["content"]
+    assert available_showtime.screen_name not in payload["content"]
     assert len(payload["content"]) <= 2000
 
 
@@ -97,7 +98,6 @@ def test_long_names_and_newlines_stay_within_discord_limit(available_showtime):
             available_showtime,
             movie_name="@everyone\n영화" * 2000,
             branch_name="지점" * 2000,
-            screen_name="상영관" * 2000,
         )
     )
     assert len(content) <= 2000

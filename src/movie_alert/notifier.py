@@ -112,7 +112,6 @@ def notification_content(showtime: Showtime) -> str:
         f"영화: {_label(showtime.movie_name, 300)}",
         f"극장: {_label(showtime.branch_name, 150)}",
         f"상영 시작: {starts_at:%Y-%m-%d %H:%M} (Asia/Seoul)",
-        f"상영관: {_label(showtime.screen_name, 100)}",
         f"예매 가능 여부: {booking_label}",
     ]
     if starts_at.date() != showtime.business_date:

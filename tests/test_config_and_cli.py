@@ -284,10 +284,13 @@ def test_offline_cli_replays_capture_without_network(
     assert output["first_showtimes"][0]["branch_id"] == branch_id
     assert output["first_showtimes"][0]["starts_at"] == starts_at
     assert output["first_showtimes"][0]["booking_status"] == "unknown"
+    assert "screen_id" not in output["first_showtimes"][0]
+    assert "screen_name" not in output["first_showtimes"][0]
     assert output["notifications"]["mode"] == "preview"
     assert output["notifications"]["previews"][0]["eligible"] is True
     assert "상영시간표 발견" in output["notifications"]["previews"][0]["content"]
     assert "예매 가능 여부: 미확인" in output["notifications"]["previews"][0]["content"]
+    assert "상영관:" not in output["notifications"]["previews"][0]["content"]
     assert output["notifications"]["outcomes"] == []
 
 

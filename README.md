@@ -39,14 +39,14 @@ uv run movie-alert --config config/watch.example.toml \
 | --- | --- |
 | 영화 / 지점 | 치이카와 극장판 / CGV 강남 (`0056`) |
 | 대상일 | 2026-10-24 토요일 |
-| 첫 회차 / 상영관 | 10:00 KST / 3관 Laser |
+| 첫 회차 | 10:00 KST |
 | `remaining_seats_hint` | 83 — 원본의 `frSeatCnt`, 의미 추가 검증 필요 |
 | `booking_status` | `unknown` |
 | 알림 미리보기 | 시작 전 회차라면 상영시간표 발견 / 실제 전송 없음 |
 
 원본 7회차와 출처는 [fixture 안내](tests/fixtures/README.md)에 기록했다. 재생 모드는 감시 실행 기간과 현재 시각의 영향을 받지 않으며, 설정된 영화·지점·날짜·요일·활성 여부는 적용한다. 출력의 `mode`는 `offline`이다. 현재 환경에 `.venv`가 이미 구성되어 있다면 `uv run movie-alert` 대신 `.venv/bin/movie-alert`로도 실행할 수 있다.
 
-성신여대입구의 사용자 제공 응답도 재생할 수 있다. 다음 명령은 9회차 중 가장 이른 2026-10-24 09:00 KST, 2관 리클라이너·Laser 회차를 선택한다. `remaining_seats_hint`는 46, `booking_status`는 `unknown`이며 실제 알림을 보내지 않는다.
+성신여대입구의 사용자 제공 응답도 재생할 수 있다. 다음 명령은 9회차 중 가장 이른 2026-10-24 09:00 KST 회차를 선택한다. `remaining_seats_hint`는 46, `booking_status`는 `unknown`이며 실제 알림을 보내지 않는다.
 
 ```bash
 .venv/bin/movie-alert --config config/watch.example.toml \
@@ -94,6 +94,8 @@ uv run movie-alert --config config/watch.example.toml
 - 사용자가 `--notify`로 실제 전송을 선택했다.
 
 예매 가능 여부는 전송 조건이 아니다. `unknown` 또는 `unavailable`이어도 유효한 첫 회차가 발견되면 전송한다. 제목은 `🎬 상영시간표 발견`이고, 현재 CGV 응답은 `예매 가능 여부: 미확인`으로 표시한다. `booking_status`를 임의로 `available`로 바꾸거나 예매 오픈으로 표현하지 않는다. 이미 시작한 회차나 활성 감시 규칙이 없는 회차는 전송하지 않는다.
+
+상영관 정보는 CLI JSON·알림 미리보기·Discord 메시지에 표시하지 않는다. CLI의 `first_showtimes`는 `screen_id`·`screen_name`을 제외하며, 내부 회차 식별과 중복 방지에는 기존 식별 정보를 유지한다.
 
 정상적인 독립 조회가 가능한 환경에서 실제 전송을 실행하려면 다음 환경 변수가 필요하다. 로컬에서는 루트의 `.env`에 값을 입력한다. 파일이 없으면 `.env.example`을 `.env`로 복사한다. `.env`는 Git에서 제외되며 실제 비밀값을 예시 파일이나 공개 설정에 넣지 않는다. 앱은 `.env`를 자동으로 읽지 않으므로 아래처럼 `uv run --env-file .env`로 주입한다. 배포 환경에서는 환경 변수를 별도로 설정한다.
 
