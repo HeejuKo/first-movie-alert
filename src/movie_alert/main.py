@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import math
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from datetime import date, datetime
@@ -59,7 +60,11 @@ def _fetch_showtimes(provider: Provider, rule: WatchRule, show_date: date) -> li
 
 
 def run_live(
-    config: AppConfig, provider: Provider, now: datetime
+    config: AppConfig,
+    provider: Provider,
+    now: datetime,
+    *,
+    can_query: Callable[[], bool] | None = None,
 ) -> tuple[list[Showtime], list[str]]:
     if now.utcoffset() is None:
         raise ValueError("now에는 시간대가 필요합니다.")
@@ -88,6 +93,11 @@ def run_live(
 
         parallel = config.http.max_parallel_requests
         for batch_start in range(0, len(date_rules), parallel):
+            if can_query is not None and not can_query():
+                message = "실행 시간이 부족하여 남은 조회를 중단합니다."
+                logger.error("%s", message)
+                errors.append(message)
+                return results, errors
             batch = list(enumerate(date_rules[batch_start : batch_start + parallel], batch_start))
             stop_queries = False
             with ThreadPoolExecutor(max_workers=len(batch)) as executor:
@@ -147,6 +157,8 @@ def deliver_notifications(
     client: httpx.Client,
     environment: NotificationEnvironment,
     now: datetime,
+    *,
+    can_notify: Callable[[], bool] | None = None,
 ) -> list[AlertOutcome]:
     """Dispatch detected first sessions only within their active watch period."""
     dispatcher = None
@@ -168,6 +180,11 @@ def deliver_notifications(
         ]
         if reason is not None or not deadlines:
             outcomes.append(AlertOutcome(key, "skipped", reason or "활성 감시 규칙이 없습니다."))
+            continue
+        if can_notify is not None and not can_notify():
+            outcomes.append(
+                AlertOutcome(key, "deferred", "실행 시간이 부족하여 전송을 보류합니다.")
+            )
             continue
         if dispatcher is None:
             dispatcher = create_dispatcher(

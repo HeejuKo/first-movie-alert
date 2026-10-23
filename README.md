@@ -3,7 +3,7 @@
 
 설정한 날짜를 모든 등록 지점에서 조회하고, 영화·지점·날짜별 가장 이른 상영 회차가 발견되면 Discord로 알리는 프로젝트다. 예매 가능 여부가 미확인이어도 **상영시간표 발견** 알림을 보낸다. **CGV 단발 조회·같은 날짜의 제한된 병렬 조회·저장 응답 재생·알림 미리보기·Discord 전송·DynamoDB 중복 방지**를 구현했다. 예매 기능이나 결제 기능은 만들지 않는다.
 
-CGV 직접 조회는 이 실행 환경에서 HTTP 403이므로, 현재 예시 설정은 공개 제3자 릴레이(`mcp.aka.page`)의 정규화된 시간표 API를 사용한다. 6개 지점의 2026-10-24 조회와 첫 회차 변환은 확인했지만, 릴레이의 지속성·CGV 이용 허용 범위·AWS에서의 장기 운영은 별도 검증이 필요하다. 예매 가능 상태의 의미가 미확인이라 `booking_status`는 `unknown`을 유지하지만 알림을 차단하지 않는다. DynamoDB는 Terraform으로 생성했고 실제 Discord 전송과 재실행 시 중복 차단을 확인했다. Lambda 배포와 주기 실행은 후속 작업이다.
+CGV 직접 조회는 이 실행 환경에서 HTTP 403이므로, 현재 예시 설정은 공개 제3자 릴레이(`mcp.aka.page`)의 정규화된 시간표 API를 사용한다. 릴레이의 지속성·CGV 이용 허용 범위·장기 운영은 추가 검증이 필요하다. 예매 가능 상태의 의미가 미확인이라 `booking_status`는 `unknown`을 유지하지만 알림을 차단하지 않는다. DynamoDB·Lambda·Scheduler를 Terraform으로 배포했고 실제 Discord 전송·중복 차단과 Scheduler 자동 실행을 확인했다. 현재 스케줄은 활성 상태이며 컴퓨터가 꺼져 있어도 AWS에서 실행된다. 검증 범위·비용·운영 절차는 [인프라 안내](infra/README.md)를 따른다.
 
 ## 개발 환경
 
@@ -95,7 +95,7 @@ uv run movie-alert --config config/watch.example.toml
 - 활성 감시 기간 안이며 DynamoDB의 조건부 쓰기로 처리 권한을 확보했다.
 - 사용자가 `--notify`로 실제 전송을 선택했다.
 
-예매 가능 여부는 전송 조건이 아니다. `unknown` 또는 `unavailable`이어도 유효한 첫 회차가 발견되면 전송한다. 제목은 `🎬 상영시간표 발견`이고, 현재 CGV 응답은 `예매 가능 여부: 미확인`으로 표시한다. `booking_status`를 임의로 `available`로 바꾸거나 예매 오픈으로 표현하지 않는다. 이미 시작한 회차나 활성 감시 규칙이 없는 회차는 전송하지 않는다.
+예매 가능 여부는 전송 조건이 아니다. `unknown` 또는 `unavailable`이어도 유효한 첫 회차가 발견되면 전송한다. 제목에는 KST 상영일·요일과 `상영시간표 발견`을 표시하고 현재 CGV 응답은 `예매 가능 여부: 미확인`으로 표시한다. `booking_status`를 임의로 `available`로 바꾸거나 예매 오픈으로 표현하지 않는다. 이미 시작한 회차나 활성 감시 규칙이 없는 회차는 전송하지 않는다.
 
 상영관 정보는 CLI JSON·알림 미리보기·Discord 메시지에 표시하지 않는다. CLI의 `first_showtimes`는 `screen_id`·`screen_name`을 제외하며, 내부 회차 식별과 중복 방지에는 기존 식별 정보를 유지한다.
 
@@ -130,7 +130,7 @@ AWS_PROFILE=movie-alert uv run --locked --extra console-login --env-file .env mo
 
 ## 설정과 판정
 
-[config/watch.example.toml](config/watch.example.toml)의 `[watch_defaults]`에 공통 날짜 목록·영화 정보·회차 정책·실행 기간을 지정하고, `[[watches]]`에 지점 이름과 ID를 적는다. 선택 항목인 `weekdays`는 ISO 요일(월=1~일=7)이며 생략하면 모든 요일을 허용한다. 기존처럼 각 `[[watches]]`에 모든 항목을 적는 설정도 지원한다. 날짜 자동 확장이나 약 30초 반복 실행은 아직 구현하지 않았다.
+[config/watch.example.toml](config/watch.example.toml)의 `[watch_defaults]`에 공통 날짜 목록·영화 정보·회차 정책·실행 기간을 지정하고, `[[watches]]`에 지점 이름과 ID를 적는다. 선택 항목인 `weekdays`는 ISO 요일(월=1~일=7)이며 생략하면 모든 요일을 허용한다. 기존처럼 각 `[[watches]]`에 모든 항목을 적는 설정도 지원한다. 날짜를 자동 확장하지 않으며 CLI는 한 번만 실행한다.
 
 - 예시에는 6개 지점과 사용자가 지정한 날짜 목록이 포함되어 있다. 지점 ID는 사용자가 CGV 화면에서 제공한 값이며 앞의 0을 유지하는 문자열이다. 공개 릴레이로 2026-10-24의 6개 지점 조회, 10월 28일·31일의 시간표 알림을 확인했다. 다른 날짜의 데이터와 장기 가용성은 추가 검증이 필요하다.
 - 조회 코드 `coCd=A420`, `rtctlScopCd=08`은 캡처된 값 그대로 `[cgv]` 설정에 둔다. 다른 값의 지원 범위와 상세 의미는 미확인이다.
@@ -140,14 +140,24 @@ AWS_PROFILE=movie-alert uv run --locked --extra console-login --env-file .env mo
 - `frSeatCnt`, `frtmpSeatCnt`, `cntlYn` 등의 의미와 미오픈·매진·취소 사례는 추가 확인이 필요하다. **좌석 수가 양수여도 현재 CGV 파서는 예매 가능으로 확정하지 않는다.** `booking_status=unknown`을 유지하면서 시간표 존재를 알린다.
 - 현재 fixture의 완전성, 다른 상영관·포맷과 페이지네이션 여부도 실제 응답으로 검증해야 한다. KOBIS는 향후 영화 메타데이터 보조 기능으로 추가할 수 있으며 현재 의존하지 않는다.
 
+## AWS 자동 실행
+
+Lambda 핸들러는 `movie_alert.lambda_handler.handler`다. Scheduler의 1분 호출 안에서 즉시 한 번, 시작 약 30초 후 한 번 조회한다. 실제 간격은 Scheduler 정밀도·조회 시간·남은 실행 시간에 영향을 받는다. 예매 상태 판정·중복 키·Discord 전송 정책은 CLI와 같다. 명시적인 `notify: true` 이벤트에서만 실제 전송하며 기본 이벤트는 미리보기다.
+
+```bash
+uv run --locked python scripts/build_lambda.py
+```
+
+이 명령은 AWS를 변경하지 않고 Linux ARM64 운영 패키지를 만든다. 실행 환경·권한 경계·비용 검토·배포·검증·스케줄 활성화·중지 절차는 [인프라 안내](infra/README.md)를 따른다. 스케줄은 기본 비활성으로 배포하고 Lambda 실제 조회와 알림 상태를 검증한 뒤 활성화한다. 감시 설정은 ZIP에 포함되므로 날짜·지점 변경 후 다시 배포해야 반영된다. 민감값이 있는 Terraform state와 plan은 Git에서 제외한다.
+
 ## 검사
 
 일반 테스트는 실제 CGV·릴레이·AWS·Discord에 요청하지 않는다. 원본 응답과 HTTP Mock으로 검증한다.
 
 ```bash
 uv run pytest -q
-uv run ruff check src tests
-uv run ruff format --check src tests
+uv run ruff check src tests scripts
+uv run ruff format --check src tests scripts
 ```
 
-핵심 검증은 공통 날짜의 전체 지점 적용, 미지정 날짜 제외, 요일 제한 생략, 첫 회차 선정, 심야 시각, 불완전 응답 거부, 직접 CGV·릴레이의 403·429·5xx 처리, 실행 종료 경계, 상태 미확인 회차의 알림·중복 방지, Discord 실패 분류·비밀값 보호, DynamoDB 조건부 요청, 알림과 상태 저장의 실패 복구다. 테스트에서 사용하는 `available` 회차는 합성 사례이며 CGV 원본 응답의 상태 의미가 검증됐다는 뜻이 아니다. 실제 DynamoDB를 연결한 로컬 CLI의 Discord 전송·상태 저장·재실행 중복 차단은 확인했다. Lambda 배포와 실환경 동시 실행·장애 복구 검증은 남아 있다.
+핵심 검증은 공통 날짜의 전체 지점 적용, 미지정 날짜 제외, 요일 제한 생략, 첫 회차 선정, 심야 시각, 불완전 응답 거부, 직접 CGV·릴레이의 403·429·5xx 처리, 실행 종료 경계, 상태 미확인 회차의 알림·중복 방지, Discord 실패 분류·비밀값 보호, DynamoDB 조건부 요청, 알림과 상태 저장의 실패 복구다. Lambda 테스트는 실제 대기 없이 두 차례 확인·기간 종료·지연 호출·남은 시간 부족·오류의 실행 실패 반영을 검증한다. 테스트에서 사용하는 `available` 회차는 합성 사례이며 CGV 원본 응답의 상태 의미가 검증됐다는 뜻이 아니다. 실제 DynamoDB를 연결한 로컬 CLI의 Discord 전송·상태 저장·재실행 중복 차단은 확인했다. 실환경 동시 실행·장애 복구 검증은 남아 있다.

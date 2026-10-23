@@ -107,7 +107,7 @@ def notification_content(showtime: Showtime) -> str:
         BookingStatus.AVAILABLE: "가능",
         BookingStatus.UNAVAILABLE: "불가",
     }[showtime.booking_status]
-    
+
     weekdays = ["월", "화", "수", "목", "금", "토", "일"]
     weekday = weekdays[starts_at.weekday()]
 

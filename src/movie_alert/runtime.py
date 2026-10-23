@@ -11,7 +11,7 @@ from botocore.exceptions import BotoCoreError
 from movie_alert.config import ConfigError
 from movie_alert.notifier import DiscordNotifier
 from movie_alert.pipeline import AlertDispatcher
-from movie_alert.state import DynamoDBStateStore
+from movie_alert.state import DynamoDBClient, DynamoDBPollLock, DynamoDBStateStore
 
 
 @dataclass(frozen=True)
@@ -40,19 +40,7 @@ def create_dispatcher(
     retention_seconds: int,
 ) -> AlertDispatcher:
     notifier = DiscordNotifier(client, environment.webhook_url, timeout_seconds)
-    try:
-        # Credential refresh creates its own regional Sign-In client from this session.
-        session = boto3.Session(region_name=environment.region)
-        dynamodb = session.client(
-            "dynamodb",
-            config=Config(
-                connect_timeout=5,
-                read_timeout=5,
-                retries={"mode": "standard", "total_max_attempts": 2},
-            ),
-        )
-    except BotoCoreError:
-        raise ConfigError("AWS 리전과 단기 자격 증명 구성을 확인하세요.") from None
+    dynamodb = _dynamodb_client(environment.region)
     state = DynamoDBStateStore(
         dynamodb,
         environment.table_name,
@@ -64,3 +52,29 @@ def create_dispatcher(
         lease_seconds=max(120, int(timeout_seconds) + 90),
         retention_seconds=retention_seconds,
     )
+
+
+def create_poll_lock() -> DynamoDBPollLock:
+    table = os.environ.get("MOVIE_ALERT_DYNAMODB_TABLE", "").strip()
+    region = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "")).strip()
+    if not table or not region:
+        raise ConfigError(
+            "Lambda 조회 잠금에는 MOVIE_ALERT_DYNAMODB_TABLE과 AWS_REGION이 필요합니다."
+        )
+    return DynamoDBPollLock(_dynamodb_client(region), table)
+
+
+def _dynamodb_client(region: str) -> DynamoDBClient:
+    try:
+        # Credential refresh creates its own regional Sign-In client from this session.
+        session = boto3.Session(region_name=region)
+        return session.client(
+            "dynamodb",
+            config=Config(
+                connect_timeout=5,
+                read_timeout=5,
+                retries={"mode": "standard", "total_max_attempts": 2},
+            ),
+        )
+    except BotoCoreError:
+        raise ConfigError("AWS 리전과 단기 자격 증명 구성을 확인하세요.") from None

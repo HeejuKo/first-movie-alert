@@ -1,6 +1,6 @@
-# DynamoDB 구성과 실행
+# Movie Alert AWS 구성과 운영
 
-현재 Terraform 구성은 알림 중복 방지용 DynamoDB 테이블 하나를 관리한다. 2026-10-23 실제 적용 후 로컬 CLI에서 Discord 전송·완료 상태 저장·재실행 시 중복 차단을 확인했다. Lambda·Scheduler·IAM 사용자·IAM 정책은 이 구성에서 생성하지 않으며 자동 실행은 아직 없다.
+현재 DynamoDB·Lambda·Scheduler·실행 역할·7일 보존 로그 그룹을 Terraform으로 관리한다. 2026-10-23 로컬 CLI의 실제 Discord 전송·상태 저장과 배포한 Lambda의 자동 조회·중복 차단을 확인했다. 스케줄은 활성 상태이며 컴퓨터가 꺼져 있어도 실행된다. 개발 IAM 사용자와 초기 관리형 정책은 콘솔에서 준비한다.
 
 ## 1. 개발용 AWS 로그인
 
@@ -94,4 +94,86 @@ AWS_PROFILE=movie-alert uv run --locked --extra console-login --env-file .env mo
 - 강변 10월 28일 10:30, 수유 10월 28일 11:00, 강변 10월 31일 14:40(KST) 첫 회차 3건이 `sent`로 처리됐다. Discord 메시지 ID 확인과 DynamoDB `SENT` 기록이 모두 성공했다.
 - 임시 인증 갱신 시 리전 누락을 수정한 뒤 같은 설정으로 다시 실행했을 때, 같은 3건은 모두 `not_claimed`였으며 추가 전송이 없었다.
 
-이는 로컬 단발 실행의 실연동 검증이다. Lambda에서의 조회·실행, Scheduler 자동 감시, 실환경 동시 실행·장애 복구는 별도 검증이 필요하다.
+이는 로컬 단발 실행의 실연동 검증이다. 실환경 동시 실행·장애 복구는 별도 검증이 필요하다.
+
+## 5. Lambda와 Scheduler 준비
+
+`movie-alert-checker`는 Python 3.13·ARM64·256MB·타임아웃 180초를 사용한다. VPC·NAT Gateway·S3 패키지 버킷·Provisioned Concurrency는 추가하지 않는다. ZIP은 `uv.lock`의 운영 의존성을 Linux ARM64 대상으로 설치한 뒤 소스와 지정 TOML만 담는다. 로컬 `.env`·인증 파일·테스트·개발 의존성·`console-login` extra는 패키지에 포함하지 않는다.
+
+Scheduler는 `rate(1 minute)`, flexible window OFF, 기본 비활성으로 생성한다. 활성화되면 즉시 한 번, 실행 시작 약 30초 후 한 번 확인한다. 처리 시간이 30초를 넘으면 추가 대기하지 않는다. HTTP 단계별 타임아웃·재시도·릴레이 교차 확인을 고려한 여유 시간이 부족하면 새 조회를 시작하지 않는다. 조회 실패 시 다음 확인을 중단하며 알림을 보내지 않는다. Scheduler와 Lambda 비동기 재시도는 0회·이벤트 최대 수명은 60초이고, 다음 정기 호출이 새로 조회한다. 앱은 90초를 초과해 지연된 스케줄 호출과 감시 기간 밖 호출을 추가 차단한다. DLQ는 없으므로 실패는 CloudWatch Errors와 로그에서 확인한다.
+
+Scheduler 입력의 `<aws.scheduler.scheduled-time>`은 AWS가 실행 시각으로 치환한다. Terraform `jsonencode`는 꺾쇠를 Unicode escape로 바꾸므로 해당 입력은 literal JSON heredoc으로 유지한다. JSON으로 해석했을 때 같은 값이어도 Scheduler 치환 단계의 결과는 다를 수 있으며 모의 테스트에서 원문 placeholder를 검사한다.
+
+이 계정은 reserved concurrency 1을 지정하면 예약되지 않은 동시성의 최소값 10을 만족하지 못해 AWS가 거부했다. 기본 `reserved_concurrency = -1`로 예약을 생략하고 DynamoDB의 별도 `polling-lock:v1` 항목으로 Lambda 조회 실행을 원자적으로 확보한다. 다른 소유자의 유효한 잠금이 있으면 조회를 생략하며, 정상·오류 종료 모두 같은 소유자 조건으로 해제한다. 잠금 저장 실패 시 조회하지 않는다. 비정상 종료 시에는 Lambda 잔여 실행 시간보다 60초 긴 lease가 만료된 뒤 복구한다. TTL은 청소 용도이며 잠금 판정에는 쓰지 않는다. 향후 계정 quota가 허용하면 `reserved_concurrency = 1`도 추가할 수 있다. 회차별 알림 중복 방지는 별도 기존 상태가 담당하고 로컬 CLI는 Lambda 조회 잠금을 사용하지 않는다.
+
+종료 시각은 패키징할 때 활성 watch의 `active_until` 최댓값에서 가져와 Scheduler `end_date`와 같은 설정을 사용한다. 현재 설정은 KST `2026-11-08T00:00:00+09:00` 미만이다. 시작일이 미래면 Scheduler에도 지정하고, 이미 지났으면 `UpdateSchedule`의 과거 시작일 제한 때문에 생략한다. 앱은 계속 각 watch의 `active_from`을 검사한다. 설정은 ZIP에 포함되므로 날짜·지점·종료일 변경 후 다시 plan·apply해야 AWS에 반영된다. 로컬 파일 수정만으로 배포된 설정이 바뀌지 않는다.
+
+### 초기 배포 권한
+
+기존 `MovieAlertStateDevelopment`는 DynamoDB 전용이다. IAM 콘솔에서 다음 두 고객 관리형 정책을 준비한다. 예시의 `000000000000`을 실제 계정 ID로 바꾸고 이름·리전·리소스 범위를 검토한다.
+
+1. [runtime-boundary.json.example](iam/runtime-boundary.json.example)을 `MovieAlertRuntimeBoundary`로 생성한다. 사용자에게 연결하지 않는다. Terraform이 생성하는 Lambda·Scheduler 역할의 permissions boundary로 사용하며, 상태 테이블 갱신·해당 로그 그룹 쓰기·해당 Lambda 호출만 상한으로 허용한다.
+2. [deployment-policy.json.example](iam/deployment-policy.json.example)을 `MovieAlertDeployment`로 생성하고 `movie-alert-dev`에 연결한다. 기존 정책은 유지한다.
+
+두 정책 모두 **IAM 왼쪽 메뉴 → 정책 → 정책 생성 → JSON**에서 고객 관리형 정책으로 만든다. 사용자 화면의 ‘인라인 정책 추가’는 사용하지 않는다. 사용자 인라인 정책은 합계 2,048자, 고객 관리형 정책은 정책당 6,144자 제한이며, 배포 JSON은 공백 제외 2,861자다. [IAM 정책 크기 제한](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_iam-quotas.html)을 참고한다.
+
+개발자는 지정한 두 역할만 관리·전달할 수 있다. 역할 생성에는 위 boundary가 필수이고 boundary 자체 수정·제거 권한은 없다. `PassRole`은 역할별 Lambda 또는 Scheduler 서비스로 제한한다. Logs `DescribeLogGroups`는 ARN 제한을 지원하지 않아 서울 리전의 조회만 허용한다. 그 외 배포 대상은 함수 하나·로그 그룹 하나·스케줄 그룹과 스케줄 하나로 제한한다.
+
+정책은 IAM Policy Autopilot 0.3.0의 정적 분석 결과를 검토해 불필요한 서비스·작업·와일드카드를 제외한 것이다. 실행 코드 분석에는 다음 명령을 사용했다. 생성 결과의 KMS 권한은 고객 관리 KMS 키를 사용하지 않는 현재 구성에 추가하지 않았다.
+
+```bash
+DISABLE_IAM_POLICY_AUTOPILOT_TELEMETRY=true uvx iam-policy-autopilot@latest generate-policies \
+  "$PWD/src/movie_alert/runtime.py" "$PWD/src/movie_alert/state.py" \
+  --region ap-northeast-2 --account YOUR_ACCOUNT_ID --service-hints dynamodb \
+  --tf-dir "$PWD/infra" --tfstate "$PWD/infra/terraform.tfstate" --pretty
+```
+
+배포 정책은 비밀값을 제거한 실제 Terraform 생성 plan JSON을 분석했으며, 갱신·정리에 대한 권한은 같은 리소스의 합성 lifecycle 입력으로 추가 분석했다. 합성 입력은 IAM 생성용이며 실제 검토·적용 가능한 Terraform plan이 아니다. 생성 결과를 자동 업로드하지 않는다.
+
+### 배포와 활성화
+
+```bash
+uv run --locked python scripts/build_lambda.py
+terraform -chdir=infra fmt -check -recursive
+terraform -chdir=infra validate
+terraform -chdir=infra test
+
+# 패키지를 다시 만들고, 스케줄이 꺼진 최초 배포 계획을 저장한다.
+uv run --locked --extra console-login --env-file .env python scripts/terraform_lambda.py plan
+uv run --locked --extra console-login --env-file .env python scripts/terraform_lambda.py apply
+
+# 첫 검사는 실제 조회만 수행한다. --notify를 지정하면 기존 상태를 사용해 실제 알림을 전송한다.
+AWS_PROFILE=movie-alert uv run --locked --extra console-login python scripts/check_lambda.py
+AWS_PROFILE=movie-alert uv run --locked --extra console-login python scripts/check_lambda.py --notify --checks 2
+
+# 위 검증이 성공하면 새 계획으로 스케줄을 활성화한다.
+uv run --locked --extra console-login --env-file .env python scripts/terraform_lambda.py plan --enable-schedule
+uv run --locked --extra console-login --env-file .env python scripts/terraform_lambda.py apply
+AWS_PROFILE=movie-alert uv run --locked --extra console-login python scripts/check_lambda.py --scheduled
+```
+
+실행 도구가 기본 PATH에 없다면 `terraform_lambda.py --terraform /absolute/path/to/terraform`을 사용한다. `plan`은 패키지·manifest와 Git 제외 파일 `infra/deployment.auto.tfvars.json`을 갱신한다. `apply`는 저장한 plan만 적용하며 이미 적용한 plan을 재사용하지 않는다. 활성화·비활성화 상태는 plan 단계에서 지정해야 한다. 활성화 후 일반 `plan`을 실행하면 스케줄을 끄는 계획이므로 상태를 유지하려면 `plan --enable-schedule`을 사용한다.
+
+Webhook은 셸 인수나 ZIP에 넣지 않고 `.env`에서 Terraform 환경 변수로 전달한다. **Terraform state와 plan에는 평문 비밀값이 저장된다.** `sensitive`는 출력 마스킹일 뿐 저장 암호화가 아니다. 도구는 `umask 077`을 사용하며 파일·백업은 소유자만 읽도록 유지한다. state·plan을 채팅·공개 아티팩트·Git에 올리지 않는다. Lambda 환경 변수는 AWS에서 저장 시 암호화된다. 공유 운영·CI 도입 전에 state 보안과 비밀 저장 방식을 다시 검토한다.
+
+스케줄 중지는 `plan` → 검토 → `apply`로 수행한다. 함수 코드를 되돌릴 때도 이전 커밋을 별도 checkout에서 패키징한 뒤 현재 state를 보존하며 plan 차이를 검토한다. 중복 방지 테이블을 삭제하거나 state를 초기화하지 않는다. 종료 뒤 Lambda·역할·스케줄만 정리하려면 `deploy_lambda = false` 계획에서 테이블 삭제가 없는지 먼저 확인한다.
+
+### 추가 비용과 요청량
+
+2026-10-23 [서울 리전 Lambda Price List](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/ap-northeast-2/index.json)의 ARM 첫 구간은 GB-second당 USD 0.0000133334, 요청 100만 건당 USD 0.20이다. 30일·매분 1회 호출은 43,200건이다. 256MB·평균 35/40/60초면 각각 378,000/432,000/648,000 GB-seconds이며 Free Tier 미적용 시 Lambda 비용은 요청 포함 약 USD 5.05/5.77/8.65다. 대기·초기화·실패 실행도 과금된다. 실제 실행 시간으로 다시 계산하며 무료라고 단정하지 않는다.
+
+[Lambda 가격](https://aws.amazon.com/lambda/pricing/)은 월 100만 요청·400,000 GB-seconds, [Scheduler 가격](https://aws.amazon.com/eventbridge/pricing/)은 월 1,400만 호출 Free Tier를 안내한다. 계정의 다른 사용량·자격·크레딧 조건은 미확인이다. Scheduler는 Free Tier 미적용 시 100만 호출당 USD 1 기준으로 43,200건에 약 USD 0.0432이며, DynamoDB·CloudWatch 로그 수집/7일 보관·전송·세금은 별도다. IAM 역할·권한 경계에는 별도 실행 요금이 없다.
+
+현재 4일×6개 지점×분당 2회면 시간표 요청은 최대 분당 48건, 30일 2,073,600건이며 오류 교차 확인이 추가될 수 있다. 모든 지점이 빈 날짜에서 중단하므로 실제 요청은 줄 수 있다. 조회 잠금 확보·해제에는 실행마다 DynamoDB 조건부 쓰기 2회가 추가된다. 릴레이 시간표는 3분·영화 목록은 10분 캐시라 30초마다 새 데이터가 보이는 것은 보장하지 않는다. 지속 운영 허용 범위·제한·가용성은 여전히 확인 대상이다.
+
+## 6. 실배포 검증 기록
+
+2026-10-23 배포 후 다음을 확인했다.
+
+- Lambda는 `Active`·Python 3.13·ARM64·256MB이며 실제 조회에서 시간표 3건을 감지했다.
+- 실제 알림 모드의 한 실행 안에서 두 차례 확인이 성공했고, 이미 로컬에서 전송한 3건은 각 확인에서 `not_claimed`로 차단했다. 별도로 겹쳐 보낸 호출은 `already_running`으로 조회를 생략했다.
+- Scheduler는 `ENABLED`이며 KST 11월 8일 00:00 종료다. 수동 호출 없이 KST 20:09~20:11 사이 연속 두 자동 실행의 각 두 차례 확인에서 감지 3·오류 0·중복 차단 3을 확인했다.
+- 자동 실행 소요 시간은 약 33초, 최대 메모리 사용은 관측한 실행 중 135MB였다. 향후 실행 시간·요청량·비용은 서비스 응답에 따라 달라진다.
+- 배포 뒤 Terraform plan은 변경 없음이었고, Python 테스트 270개·Ruff·Terraform 모의 테스트 3개를 통과했다. 실환경 강제 종료·Discord 전송 실패 복구와 장기 가용성은 별도 검증 대상이다.
+
+감지된 새 회차가 없으면 Discord 메시지가 오지 않는 것이 정상이다. 실행 상태는 `scripts/check_lambda.py --scheduled`와 CloudWatch 로그에서 확인한다. 날짜 변경 뒤에는 위의 `plan --enable-schedule` → 검토 → `apply` 순서로 다시 배포한다.

@@ -36,6 +36,59 @@ class DynamoDBClient(Protocol):
     def update_item(self, **kwargs: Any) -> dict[str, Any]: ...
 
 
+class DynamoDBPollLock:
+    """A separate expiring execution lease; notification records stay untouched."""
+
+    def __init__(self, client: DynamoDBClient, table_name: str) -> None:
+        _nonempty_string(table_name)
+        self._client = client
+        self._table_name = table_name
+
+    def acquire(self, owner: str, now_epoch: int, lease_seconds: int) -> bool:
+        _identity("polling-lock:v1", owner, now_epoch)
+        _integer(lease_seconds, minimum=1)
+        try:
+            self._client.update_item(
+                TableName=self._table_name,
+                Key={"id": {"S": "polling-lock:v1"}},
+                UpdateExpression="SET #owner = :owner, #lease = :lease, #expires = :expires",
+                ConditionExpression="attribute_not_exists(#id) OR #lease <= :now",
+                ExpressionAttributeNames={
+                    "#id": "id",
+                    "#owner": "owner",
+                    "#lease": "lease_until",
+                    "#expires": "expires_at",
+                },
+                ExpressionAttributeValues={
+                    ":owner": {"S": owner},
+                    ":now": _number(now_epoch),
+                    ":lease": _number(now_epoch + lease_seconds),
+                    ":expires": _number(now_epoch + lease_seconds + 86400),
+                },
+            )
+        except ClientError as error:
+            if error.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+                return False
+            raise StateError("정기 조회 잠금을 확보하지 못했습니다.") from None
+        except BotoCoreError:
+            raise StateError("정기 조회 잠금을 확보하지 못했습니다.") from None
+        return True
+
+    def release(self, owner: str) -> None:
+        _nonempty_string(owner)
+        try:
+            self._client.update_item(
+                TableName=self._table_name,
+                Key={"id": {"S": "polling-lock:v1"}},
+                UpdateExpression="SET #lease = :zero",
+                ConditionExpression="#owner = :owner",
+                ExpressionAttributeNames={"#owner": "owner", "#lease": "lease_until"},
+                ExpressionAttributeValues={":owner": {"S": owner}, ":zero": _number(0)},
+            )
+        except (ClientError, BotoCoreError):
+            raise StateError("정기 조회 잠금을 안전하게 해제하지 못했습니다.") from None
+
+
 class DynamoDBStateStore:
     """Use an ``id`` string partition key and ``expires_at`` numeric TTL.
 

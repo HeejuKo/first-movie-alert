@@ -52,3 +52,32 @@ variable "deletion_protection_enabled" {
   type        = bool
   default     = true
 }
+
+variable "deploy_lambda" {
+  description = "Deploy the checker only after packaging, permission and cost review."
+  type        = bool
+  default     = false
+}
+
+variable "schedule_enabled" {
+  description = "Enable after a successful Lambda smoke test."
+  type        = bool
+  default     = false
+}
+
+variable "discord_webhook_url" {
+  description = "Private secret: stored in protected local Terraform state and plan."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "reserved_concurrency" {
+  description = "Use the DynamoDB polling lease by default; optional reservation if account quota allows."
+  type        = number
+  default     = -1
+  validation {
+    condition     = contains([-1, 1], var.reserved_concurrency)
+    error_message = "Use -1, or 1 after reviewing account concurrency limits."
+  }
+}

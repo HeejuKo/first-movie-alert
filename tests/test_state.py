@@ -4,7 +4,7 @@ from unittest.mock import Mock
 import pytest
 from botocore.exceptions import ClientError, EndpointConnectionError, NoCredentialsError
 
-from movie_alert.state import DynamoDBStateStore, StateError
+from movie_alert.state import DynamoDBPollLock, DynamoDBStateStore, StateError
 
 
 @pytest.fixture
@@ -22,6 +22,43 @@ def conditional_failure():
         {"Error": {"Code": "ConditionalCheckFailedException", "Message": "private-value"}},
         "UpdateItem",
     )
+
+
+def test_poll_lock_uses_separate_key_and_expiry_condition(client):
+    lock = DynamoDBPollLock(client, "movie-alert-state")
+    assert lock.acquire("request-1", 1000, 240)
+    request = client.update_item.call_args.kwargs
+    assert request["Key"] == {"id": {"S": "polling-lock:v1"}}
+    assert request["ConditionExpression"] == "attribute_not_exists(#id) OR #lease <= :now"
+    assert request["ExpressionAttributeValues"][":lease"] == {"N": "1240"}
+    assert "status" not in request["ExpressionAttributeNames"].values()
+    assert "#expires" not in request["ConditionExpression"]
+
+
+def test_competing_poll_skips_and_release_is_owner_conditional(client):
+    lock = DynamoDBPollLock(client, "movie-alert-state")
+    client.update_item.side_effect = [{}, conditional_failure(), {}]
+    assert lock.acquire("request-1", 1000, 240)
+    assert not lock.acquire("request-2", 1000, 240)
+    lock.release("request-1")
+    request = client.update_item.call_args.kwargs
+    assert request["ConditionExpression"] == "#owner = :owner"
+    assert request["ExpressionAttributeValues"][":owner"] == {"S": "request-1"}
+    assert request["ExpressionAttributeValues"][":zero"] == {"N": "0"}
+
+
+@pytest.mark.parametrize("operation", ["acquire", "release"])
+def test_poll_storage_errors_are_not_treated_as_busy(client, operation):
+    lock = DynamoDBPollLock(client, "movie-alert-state")
+    client.update_item.side_effect = EndpointConnectionError(
+        endpoint_url="https://private-value.example"
+    )
+    with pytest.raises(StateError) as error:
+        if operation == "acquire":
+            lock.acquire("request-1", 1000, 240)
+        else:
+            lock.release("request-1")
+    assert "private-value" not in str(error.value)
 
 
 def test_claim_is_one_conditional_write_and_sets_lease_attempt_and_cleanup_deadlines(state, client):

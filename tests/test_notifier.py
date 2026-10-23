@@ -44,7 +44,8 @@ def test_send_confirms_message_and_disables_mentions(available_showtime):
     assert request.extensions["timeout"] == {"connect": 5, "read": 7, "write": 7, "pool": 7}
     payload = json.loads(request.content)
     assert payload["allowed_mentions"] == {"parse": []}
-    assert "2026-10-24 10:00 (Asia/Seoul)" in payload["content"]
+    assert "10/24(토) 상영시간표 발견" in payload["content"]
+    assert "1회차: 10:00" in payload["content"]
     assert "강남" in payload["content"]
     assert "상영관:" not in payload["content"]
     assert available_showtime.screen_name not in payload["content"]
@@ -57,7 +58,8 @@ def test_message_converts_timezone_and_preserves_business_date(available_showtim
         starts_at=datetime(2026, 10, 24, 16, 10, tzinfo=UTC),
     )
     content = notification_content(showtime)
-    assert "2026-10-25 01:10 (Asia/Seoul)" in content
+    assert "10/25(일) 상영시간표 발견" in content
+    assert "1회차: 01:10" in content
     assert "상영 영업일: 2026-10-24" in content
 
 

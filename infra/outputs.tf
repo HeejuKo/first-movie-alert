@@ -25,3 +25,11 @@ output "runtime_dynamodb_policy_json" {
     }]
   })
 }
+
+output "lambda_function_name" {
+  value = try(aws_lambda_function.checker[0].function_name, null)
+}
+
+output "schedule_name" {
+  value = try(aws_scheduler_schedule.checker[0].name, null)
+}
