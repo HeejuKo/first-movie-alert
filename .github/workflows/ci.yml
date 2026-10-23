@@ -60,7 +60,7 @@ jobs:
         run: terraform -chdir=infra init -backend=false -input=false -lockfile=readonly
 
       - name: Terraform validate
-        run: terraform -chdir=infra validate -no-color
+        run: uv run --locked python scripts/validate_terraform.py -no-color
 
       - name: Terraform mock tests without AWS access
         run: terraform -chdir=infra test -no-color
