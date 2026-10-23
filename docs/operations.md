@@ -58,13 +58,13 @@ KST 20:35~20:50:48 구간의 모든 페이지를 읽었으며 마지막 수집 �
 
 MIT 소스 라이선스와 공개 REST 제공은 장기 반복 조회·CGV 원천 이용 허용·가용성 보장을 뜻하지 않는다. 운영자에게 개인 알림 목적, 영화·지점·날짜 수, 교차 확인 포함 요청 상한, 기간을 설명하고 허용 주기와 별도 조건을 확인해야 한다. 문의를 전송하지는 않았다.
 
-## 2. GitHub Actions CI — 원격 실행 확인 중
+## 2. GitHub Actions CI — 원격 성공 확인
 
 [CI workflow](../.github/workflows/ci.yml)는 push·PR·수동 실행에서 Python 3.13 / 고정 uv로 lockfile 의존성을 설치하고 pytest, Ruff lint/format을 검사한다. 이어 Lambda ZIP 빌드와 Terraform 1.17.0의 fmt·init·validate·mock test를 실행한다.
 
 검사 job은 AWS 인증·Webhook·운영 state·배포 권한을 사용하지 않는다. init은 `-backend=false -lockfile=readonly`이며 앱과 bootstrap 모의 테스트는 리소스를 만들지 않는다. action은 commit SHA로 고정하고 검사 token은 `contents: read`만 허용한다. [GitHub 보안 지침](https://docs.github.com/en/actions/reference/security/secure-use), [uv 연동](https://docs.astral.sh/uv/guides/integration/github/)
 
-사용자 승인으로 `main`에 push해 실제 실행을 확인했다. Python·Ruff·패키징·Terraform init은 통과했으며 Terraform validate에서 Linux 공급자 checksum 불일치가 확인돼 lockfile을 보완하고 있다. 로컬 검사와 GitHub 전체 실행 성공은 별개다. branch protection은 아직 변경하지 않았다.
+사용자 승인으로 `main`에 push해 실제 실행을 확인했다. Linux 공급자 checksum을 공식 서명 패키지로 보완한 뒤 [1b7b253의 CI](https://github.com/HeejuKo/first-movie-alert/actions/runs/39958615811)에서 Python 테스트 305개·Ruff·패키징·Terraform fmt/init/validate·앱 mock 3개·bootstrap mock 2개가 모두 통과했다. 자동 배포는 당시 비활성이라 생략됐다. branch protection은 아직 변경하지 않았다.
 
 ## 3. 배포 자동화 — 초기 구성 진행 중
 
@@ -73,7 +73,7 @@ MIT 소스 라이선스와 공개 REST 제공은 장기 반복 조회·CGV 원�
 3. OIDC provider와 배포 역할을 별도로 마련하고 실제 저장소 `sub` 형식을 확인해 main 또는 보호 environment로 신뢰를 제한한다. PR에 배포 권한을 주지 않는다. bootstrap 권한이 있다고 가정하지 않는다.
 4. 검증 성공 후 코드·감시 설정을 패키징해 plan 검토·적용을 연결한다. 동시 배포를 막고 스케줄 활성 상태·종료일·롤백 절차를 보존한다.
 
-S3·OIDC·배포 역할을 `infra/bootstrap/`으로 생성했고 앱 state 이전을 확인했다. 이전 전후 10개 리소스·출력값이 동일했고 원격 plan은 생성·삭제 없이 Lambda 코드 갱신 1건만 포함했다. opt-in 배포 workflow도 작성했으며 GitHub 설정·실제 최초 OIDC 배포까지 확인해야 완료다. 구성과 명령·권한 정리는 [배포 안내](deployment.md)를 따른다.
+S3·OIDC·배포 역할을 `infra/bootstrap/`으로 생성했고 앱 state 이전을 확인했다. 이전 전후 10개 리소스·출력값이 동일했고 원격 plan은 생성·삭제 없이 Lambda 코드 갱신 1건만 포함했다. GitHub 변수·Webhook secret 등록과 배포 활성화도 완료했으며 실제 최초 OIDC 배포는 확인 중이다. 구성과 명령·권한 정리는 [배포 안내](deployment.md)를 따른다.
 
 ## 4. 장애 감지와 복구 — 다음 단계
 

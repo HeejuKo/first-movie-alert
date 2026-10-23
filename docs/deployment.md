@@ -2,6 +2,8 @@
 
 검사를 통과한 `main` push에서 코드와 감시 설정을 함께 배포하도록 준비했다. `DEPLOY_ENABLED=true`일 때만 배포 job이 실행된다. 초기 S3·OIDC 구성, 기존 state 이전, GitHub 설정과 최초 실제 배포 확인이 완료 기준이다. PR·수동 실행은 검사만 수행한다.
 
+2026-10-23 S3·OIDC·배포 역할 생성, state 이전, GitHub 설정과 CI 성공을 확인했다. 최초 자동 배포의 실제 OIDC 인증·plan·apply 확인을 진행 중이다.
+
 ## 초기 구성과 state 이전
 
 `infra/bootstrap/`은 앱과 별도 로컬 state로 S3 버킷·OIDC 공급자·배포 역할을 관리한다. 기존 GitHub OIDC 공급자가 있다면 URL·audience를 확인하고 `existing_oidc_provider_arn`으로 재사용한다. 공용 공급자를 중복 생성하거나 삭제하지 않는다.
