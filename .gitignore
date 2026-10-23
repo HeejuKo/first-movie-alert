@@ -224,5 +224,17 @@ __marimo__/
 # AI
 AGENTS.md
 
+# Terraform local cache, state and potentially sensitive plans/variables
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.plan
+*.tfvars
+*.tfvars.json
+infra/iam/*.local.json
+crash.log
+crash.*.log
+
 # macOS
 .DS_store

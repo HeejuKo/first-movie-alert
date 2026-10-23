@@ -1,0 +1,6 @@
+# Replace with the intended AWS account ID. This is synthetic example data.
+expected_account_id = "000000000000"
+aws_region          = "ap-northeast-2"
+table_name          = "movie-alert-state"
+read_capacity       = 1
+write_capacity      = 1

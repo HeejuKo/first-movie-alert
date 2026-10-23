@@ -106,8 +106,11 @@ uv run movie-alert --config config/watch.example.toml
 | `AWS_REGION` | 테이블이 있는 리전 (`AWS_DEFAULT_REGION`도 지원) |
 
 ```bash
-uv run --env-file .env movie-alert --config config/watch.example.toml --notify
+AWS_PROFILE=movie-alert uv run --locked --extra console-login --env-file .env movie-alert \
+  --config config/watch.example.toml --notify
 ```
+
+위 명령은 `movie-alert` 프로필로 AWS 콘솔의 단기 로그인을 사용하는 로컬 예시다. 개발 IAM 사용자·프로필 준비, 비용 검토, DynamoDB Terraform 적용 및 실제 전송·중복 방지 검증은 [인프라 안내](infra/README.md)를 따른다. `console-login`은 이 로그인 방식에 필요한 선택 의존성이며 Lambda IAM 역할에는 필요하지 않다.
 
 테이블은 문자열 partition key `id`를 사용하며 숫자 `expires_at`을 TTL 속성으로 설정한다. 앱은 테이블을 생성하지 않는다. AWS 인증은 SDK의 기본 자격 증명 체인을 사용하며 운영 시 IAM 역할·단기 자격 증명을 우선한다. 실행 역할에는 해당 테이블의 `dynamodb:UpdateItem` 권한이 필요하다. 리소스 생성과 비용 검토는 배포 단계에서 진행하며, 이번 구현에서는 AWS 리소스를 생성하지 않았다.
 

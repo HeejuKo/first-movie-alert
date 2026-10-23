@@ -6,6 +6,9 @@ readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = ["boto3>=1.40,<2", "httpx>=0.28,<0.29"]
 
+[project.optional-dependencies]
+console-login = ["boto3[crt]>=1.43,<2"]
+
 [project.scripts]
 movie-alert = "movie_alert.main:main"
 
