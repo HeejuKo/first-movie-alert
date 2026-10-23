@@ -107,11 +107,13 @@ def notification_content(showtime: Showtime) -> str:
         BookingStatus.AVAILABLE: "가능",
         BookingStatus.UNAVAILABLE: "불가",
     }[showtime.booking_status]
+    weekdays = ["월", "화", "수", "목", "금", "토", "일"]
+    weekday = weekdays[starts_at.weekday()]
+
     lines = [
-        "🎬 상영시간표 발견",
-        f"영화: {_label(showtime.movie_name, 300)}",
-        f"극장: {_label(showtime.branch_name, 150)}",
-        f"상영 시작: {starts_at:%Y-%m-%d %H:%M} (Asia/Seoul)",
+        f"🎬 {starts_at:%m/%d}({weekday}) 상영시간표 발견",
+        f"{_label(showtime.movie_name, 300)} (CGV {_label(showtime.branch_name, 150)})",
+        f"1회차: {starts_at:%H:%M}",
         f"예매 가능 여부: {booking_label}",
     ]
     if starts_at.date() != showtime.business_date:
