@@ -15,7 +15,7 @@ from movie_alert.health import (
     event_content,
 )
 from movie_alert.models import SEOUL
-from movie_alert.pipeline import AlertOutcome
+from movie_alert.outcomes import AlertOutcome
 from movie_alert.state import StateError
 
 NOW = datetime(2026, 10, 23, 22, tzinfo=SEOUL)

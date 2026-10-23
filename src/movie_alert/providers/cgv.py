@@ -4,6 +4,7 @@ import time
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from datetime import time as datetime_time
+from functools import partial
 from typing import Any
 
 import httpx
@@ -16,25 +17,16 @@ from movie_alert.providers.base import (
     RateLimitError,
     ResponseValidationError,
 )
+from movie_alert.providers.common import (
+    RETRYABLE_STATUSES,
+    get_response,
+    parse_business_date,
+    required_text,
+)
 
 SCHEDULE_URL = "https://cgv.co.kr/api/v1/booking/searchSchByMov"
-RETRYABLE_STATUSES = {500, 502, 503, 504}
-
-
-def _text(row: dict[str, Any], key: str) -> str:
-    value = row.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise ResponseValidationError(f"CGV 필드 {key}: 비어 있지 않은 문자열이 필요합니다.")
-    return value.strip()
-
-
-def _business_date(value: str) -> date:
-    if len(value) != 8 or not value.isascii() or not value.isdigit():
-        raise ResponseValidationError("CGV scnYmd: YYYYMMDD 형식이 필요합니다.")
-    try:
-        return date(int(value[:4]), int(value[4:6]), int(value[6:8]))
-    except ValueError:
-        raise ResponseValidationError("CGV scnYmd: 유효하지 않은 날짜입니다.") from None
+_text = partial(required_text, source="CGV")
+_business_date = partial(parse_business_date, field="CGV scnYmd")
 
 
 def _screening_time(day: date, value: str) -> datetime:
@@ -108,7 +100,8 @@ class CgvProvider:
     def fetch_showtimes(self, movie_id: str, branch_id: str, show_date: date) -> list[Showtime]:
         for attempt in range(self.http.max_retries + 1):
             try:
-                response = self.client.get(
+                response = get_response(
+                    self.client,
                     SCHEDULE_URL,
                     params={
                         "coCd": self.settings.co_cd,
@@ -117,11 +110,7 @@ class CgvProvider:
                         "movNo": movie_id,
                         "rtctlScopCd": self.settings.rtctl_scop_cd,
                     },
-                    headers={"Accept": "application/json", "User-Agent": "movie-alert/0.1"},
-                    timeout=httpx.Timeout(
-                        self.http.timeout_seconds, connect=min(5.0, self.http.timeout_seconds)
-                    ),
-                    follow_redirects=False,
+                    timeout_seconds=self.http.timeout_seconds,
                 )
             except httpx.RequestError:
                 if attempt == self.http.max_retries:

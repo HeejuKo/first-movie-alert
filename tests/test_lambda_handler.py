@@ -6,9 +6,9 @@ from unittest.mock import Mock
 import pytest
 
 from movie_alert import lambda_handler as entry
-from movie_alert.main import deliver_notifications, run_live
+from movie_alert.application import deliver_notifications, run_live
 from movie_alert.models import SEOUL
-from movie_alert.pipeline import AlertOutcome
+from movie_alert.outcomes import AlertOutcome
 
 NOW = datetime(2026, 10, 23, 12, tzinfo=SEOUL)
 
@@ -113,7 +113,7 @@ def test_two_checks_start_thirty_seconds_apart(context, clock, runtime):
 def test_explicit_notification_uses_same_delivery_path(context, runtime):
     query, send, environment = runtime
     query.return_value = (["synthetic-showtime"], [])
-    send.return_value = [SimpleNamespace(status="not_claimed")]
+    send.return_value = [AlertOutcome("test-key", "not_claimed", "already claimed")]
     result = entry.handler({"notify": True, "checks": 1}, context)
     assert result["checks"][0]["outcomes"] == {"not_claimed": 1}
     environment.assert_called_once()

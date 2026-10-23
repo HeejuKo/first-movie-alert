@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from movie_alert.application import run_live
 from movie_alert.config import ConfigError, load_config
-from movie_alert.main import main, run_live
+from movie_alert.main import main
 from movie_alert.models import SEOUL
 from movie_alert.providers.base import (
     AccessDeniedError,

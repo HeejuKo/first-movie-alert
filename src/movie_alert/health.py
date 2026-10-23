@@ -10,7 +10,8 @@ from uuid import uuid4
 from botocore.exceptions import BotoCoreError, ClientError
 
 from movie_alert.models import SEOUL
-from movie_alert.pipeline import AlertDispatcher, AlertOutcome
+from movie_alert.outcomes import AlertOutcome
+from movie_alert.pipeline import AlertDispatcher
 from movie_alert.state import StateError
 
 HEALTH_KEY = "health:v1:checker"

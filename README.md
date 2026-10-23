@@ -11,6 +11,12 @@ CGV 직접 조회는 이 실행 환경에서 HTTP 403이므로, 현재 예시 �
 
 검사를 통과한 `main` push에서 설정과 코드를 배포하는 workflow도 준비했다. S3 state 이전·OIDC·GitHub 설정과 활성화 절차는 [배포 안내](docs/deployment.md)를 따른다. 초기 구성이 끝나기 전에는 자동 배포가 실행되지 않는다.
 
+## 코드 구조
+
+`main.py`는 CLI 인자·저장 응답 재생·JSON 출력을 담당하고, `lambda_handler.py`는 스케줄 호출·실행 시간·조회 잠금을 제어한다. 두 진입점은 `application.py`의 Provider 생성·실제 조회·알림 전달 함수를 공유한다.
+
+`providers/common.py`는 Provider의 문자열·날짜 검증과 GET 요청 설정을 공유한다. 응답 구조·상영 시각 형식·재시도·영화 미공개 교차 확인은 각 Provider가 처리한다. `outcomes.py`는 알림 결과 타입과 실패 판정을 관리하며 CLI 종료 코드·Lambda 실행 결과·운영 로그 집계에서 같은 상태값을 사용한다.
+
 ## 개발 환경
 
 Python 3.13과 [uv](https://docs.astral.sh/uv/getting-started/installation/)를 사용한다. 의존성은 `pyproject.toml`과 `uv.lock`으로 관리한다. 프로젝트의 `.venv`를 사용하며 기존 로컬 `venv/`와는 별도다.

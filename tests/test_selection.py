@@ -5,8 +5,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from movie_alert.application import run_live
 from movie_alert.config import ConfigError, load_config
-from movie_alert.main import run_live
 from movie_alert.models import SEOUL
 
 EXAMPLE = Path(__file__).parents[1] / "config/watch.example.toml"

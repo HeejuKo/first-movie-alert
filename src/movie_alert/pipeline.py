@@ -4,7 +4,6 @@ import hashlib
 import json
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 from uuid import uuid4
@@ -18,6 +17,7 @@ from movie_alert.notifier import (
     NotificationRejected,
     notification_content,
 )
+from movie_alert.outcomes import AlertOutcome
 from movie_alert.state import StateError, StateStore
 
 
@@ -25,14 +25,6 @@ class Notifier(Protocol):
     def send(self, showtime: Showtime) -> DeliveryReceipt: ...
 
     def send_text(self, content: str) -> DeliveryReceipt: ...
-
-
-@dataclass(frozen=True)
-class AlertOutcome:
-    key: str
-    status: str
-    detail: str
-    message_id: str | None = None
 
 
 def current_time() -> datetime:

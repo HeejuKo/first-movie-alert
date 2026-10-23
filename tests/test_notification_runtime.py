@@ -8,10 +8,12 @@ import httpx
 import pytest
 from botocore.exceptions import NoRegionError
 
+from movie_alert import application
 from movie_alert.config import ConfigError
 from movie_alert.models import SEOUL, BookingStatus
 from movie_alert.notifier import DiscordNotifier
-from movie_alert.pipeline import AlertDispatcher, AlertOutcome
+from movie_alert.outcomes import AlertOutcome
+from movie_alert.pipeline import AlertDispatcher
 from movie_alert.runtime import (
     NotificationEnvironment,
     create_dispatcher,
@@ -134,9 +136,9 @@ def test_session_region_reaches_signin_refresh_without_profile_region(monkeypatc
 
 def test_started_showtimes_do_not_initialize_aws_or_discord(config, showtimes, monkeypatch):
     factory = Mock(side_effect=AssertionError("must not create notification dependencies"))
-    monkeypatch.setattr(cli, "create_dispatcher", factory)
+    monkeypatch.setattr(application, "create_dispatcher", factory)
     with httpx.Client() as client:
-        outcomes = cli.deliver_notifications(
+        outcomes = application.deliver_notifications(
             config, [showtimes[0]], client, ENVIRONMENT, showtimes[0].starts_at
         )
     assert len(outcomes) == 1
@@ -163,11 +165,11 @@ def test_unknown_capture_sends_once_and_status_change_does_not_resend(
             retention_seconds=retention_seconds,
         )
 
-    monkeypatch.setattr(cli, "create_dispatcher", factory)
+    monkeypatch.setattr(application, "create_dispatcher", factory)
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        first = cli.deliver_notifications(config, showtimes[:1], client, ENVIRONMENT, NOW)
+        first = application.deliver_notifications(config, showtimes[:1], client, ENVIRONMENT, NOW)
         changed = replace(showtimes[0], booking_status=BookingStatus.AVAILABLE)
-        second = cli.deliver_notifications(config, [changed], client, ENVIRONMENT, NOW)
+        second = application.deliver_notifications(config, [changed], client, ENVIRONMENT, NOW)
     assert first[0].status == "sent"
     assert second[0].status == "not_claimed"
     assert state.claim.call_count == 2
@@ -185,9 +187,9 @@ def test_expired_watch_does_not_initialize_delivery(config, showtimes, monkeypat
     available = replace(showtimes[0], booking_status=BookingStatus.AVAILABLE)
     expired = replace(config.watches[0], active_until=NOW)
     factory = Mock()
-    monkeypatch.setattr(cli, "create_dispatcher", factory)
+    monkeypatch.setattr(application, "create_dispatcher", factory)
     with httpx.Client() as client:
-        result = cli.deliver_notifications(
+        result = application.deliver_notifications(
             replace(config, watches=(expired,)), [available], client, ENVIRONMENT, NOW
         )
     assert result[0].status == "skipped"
@@ -202,9 +204,9 @@ def test_eligible_live_result_is_dispatched_with_its_watch_deadline(
     dispatcher = Mock()
     dispatcher.dispatch.return_value = AlertOutcome("test-key", "sent", "synthetic success", "123")
     factory = Mock(return_value=dispatcher)
-    monkeypatch.setattr(cli, "create_dispatcher", factory)
+    monkeypatch.setattr(application, "create_dispatcher", factory)
     with httpx.Client() as client:
-        result = cli.deliver_notifications(config, [available], client, ENVIRONMENT, NOW)
+        result = application.deliver_notifications(config, [available], client, ENVIRONMENT, NOW)
     assert result[0].status == "sent"
     dispatcher.dispatch.assert_called_once_with(
         available, active_until=config.watches[0].active_until
@@ -225,7 +227,7 @@ def test_cli_defaults_to_preview_even_for_synthetic_available_results(
     monkeypatch.setattr(cli, "run_live", lambda *args: ([available], []))
     monkeypatch.setattr(cli, "current_time", lambda: NOW)
     factory = Mock()
-    monkeypatch.setattr(cli, "create_dispatcher", factory)
+    monkeypatch.setattr(application, "create_dispatcher", factory)
     assert cli.main(["--config", "unused"]) == 0
     output = json.loads(capsys.readouterr().out)
     assert output["notifications"]["mode"] == "preview"
@@ -246,3 +248,34 @@ def test_query_errors_prevent_real_delivery(config, showtimes, monkeypatch, caps
     assert cli.main(["--config", "unused", "--notify"]) == 1
     assert json.loads(capsys.readouterr().out)["errors"] == ["synthetic query error"]
     delivery.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("status", "exit_code"),
+    [
+        ("sent", 0),
+        ("not_claimed", 0),
+        ("skipped", 0),
+        ("deferred", 1),
+        ("uncertain", 1),
+        ("failed", 1),
+        ("state_error", 1),
+    ],
+)
+def test_cli_preserves_status_strings_and_failure_exit_codes(
+    config, showtimes, monkeypatch, capsys, status, exit_code
+):
+    monkeypatch.setattr(cli, "load_config", lambda path: config)
+    monkeypatch.setattr(cli, "notification_environment", lambda: ENVIRONMENT)
+    monkeypatch.setattr(cli, "current_time", lambda: NOW)
+    monkeypatch.setattr(cli, "run_live", lambda *args: (showtimes[:1], []))
+    monkeypatch.setattr(
+        cli,
+        "deliver_notifications",
+        lambda *args: [AlertOutcome("test-key", status, "synthetic result")],
+    )
+    assert cli.main(["--config", "unused", "--notify"]) == exit_code
+    output = json.loads(capsys.readouterr().out)
+    assert output["notifications"]["outcomes"] == [
+        {"key": "test-key", "status": status, "detail": "synthetic result", "message_id": None}
+    ]

@@ -15,10 +15,18 @@ from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 from botocore.paginate import Paginator
 
+from movie_alert.outcomes import ALERT_STATUSES, FAILURE_STATUSES
+
 FUNCTION = "movie-alert-checker"
 LOG_GROUP = f"/aws/lambda/{FUNCTION}"
 SDK_CONFIG = Config(
     connect_timeout=5, read_timeout=10, retries={"mode": "standard", "total_max_attempts": 2}
+)
+OPERATIONAL_OUTCOME_PATTERN = re.compile(rf" status=({'|'.join(ALERT_STATUSES)})\b")
+NOTIFICATION_ISSUE_PATTERN = re.compile(
+    r"key=(showtime:v1:[0-9a-f]{64}) "
+    rf"status=({'|'.join(sorted(FAILURE_STATUSES))}) "
+    r"message_id=(None|[0-9]+)\b"
 )
 
 
@@ -50,21 +58,13 @@ def log_summary(client: Any, start: datetime, end: datetime) -> dict[str, Any]:
             if "운영 상태 기록 생략:" in message:
                 health_skips += 1
             if "운영 알림 결과:" in message:
-                outcome = re.search(
-                    r" status=(sent|uncertain|failed|deferred|state_error|not_claimed|skipped)\b",
-                    message,
-                )
+                outcome = OPERATIONAL_OUTCOME_PATTERN.search(message)
                 if outcome:
                     operational_outcomes[outcome[1]] += 1
                 else:
                     malformed += 1
             if "회차 알림 확인 필요:" in message:
-                issue = re.search(
-                    r"key=(showtime:v1:[0-9a-f]{64}) "
-                    r"status=(deferred|uncertain|failed|state_error) "
-                    r"message_id=(None|[0-9]+)\b",
-                    message,
-                )
+                issue = NOTIFICATION_ISSUE_PATTERN.search(message)
                 if issue:
                     needs_review[issue[1]] = {
                         "key": issue[1],

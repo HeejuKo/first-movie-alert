@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import boto3
+import pytest
 from botocore.exceptions import ClientError
 from botocore.stub import Stubber
 
@@ -14,6 +15,26 @@ spec = importlib.util.spec_from_file_location(
 operations = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(operations)
 NOW = datetime(2026, 10, 23, 12, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    "status", ["sent", "not_claimed", "skipped", "deferred", "uncertain", "failed", "state_error"]
+)
+def test_all_operational_status_strings_remain_readable(status):
+    client = Mock()
+    client.get_paginator.return_value.paginate.return_value = [
+        {
+            "events": [
+                {
+                    "timestamp": 1000,
+                    "message": f"운영 알림 결과: key=operations:v1:example:failure status={status}",
+                }
+            ]
+        }
+    ]
+    result = operations.log_summary(client, NOW, NOW)
+    assert result["operational_notification_outcomes"] == {status: 1}
+    assert result["unparsed_records"] == 0
 
 
 def test_operational_alerts_and_recovery_keys_are_reported_without_raw_logs():

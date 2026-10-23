@@ -10,8 +10,8 @@ from typing import Any, Protocol
 
 import httpx
 
+from movie_alert.application import create_provider, deliver_notifications, run_live
 from movie_alert.config import AppConfig, ConfigError, load_config
-from movie_alert.main import create_provider, deliver_notifications, run_live
 from movie_alert.notifier import NotificationError
 from movie_alert.pipeline import current_time
 from movie_alert.runtime import (
@@ -177,7 +177,7 @@ def _run_checks(
         counts: dict[str, int] = {}
         for outcome in outcomes:
             counts[outcome.status] = counts.get(outcome.status, 0) + 1
-            if outcome.status in {"deferred", "uncertain", "failed", "state_error"}:
+            if outcome.is_failure:
                 logger.warning(
                     "회차 알림 확인 필요: key=%s status=%s message_id=%s",
                     outcome.key,
@@ -193,9 +193,7 @@ def _run_checks(
         }
         summaries.append(summary)
         logger.info("확인 완료: request_id=%s summary=%s", context.aws_request_id, summary)
-        if errors or any(
-            counts.get(status) for status in ("deferred", "uncertain", "failed", "state_error")
-        ):
+        if errors or any(outcome.is_failure for outcome in outcomes):
             failed = True
             break
     if failed:

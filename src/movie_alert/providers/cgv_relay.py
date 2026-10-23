@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from datetime import time as datetime_time
+from functools import partial
 from typing import Any
 
 import httpx
@@ -20,10 +21,17 @@ from movie_alert.providers.base import (
     RateLimitError,
     ResponseValidationError,
 )
+from movie_alert.providers.common import (
+    RETRYABLE_STATUSES,
+    get_response,
+    parse_business_date,
+    required_text,
+)
 
 TIMETABLE_PATH = "/api/cgv/timetable"
 MOVIES_PATH = "/api/cgv/movies"
-RETRYABLE_STATUSES = {500, 502, 503, 504}
+_text = partial(required_text, source="CGV 릴레이")
+_business_date = partial(parse_business_date, field="CGV 릴레이 playDate")
 logger = logging.getLogger(__name__)
 
 
@@ -58,22 +66,6 @@ def _network_error(
     else:
         reason = "통신에 실패했습니다. 현재 네트워크와 릴레이 상태를 확인하세요."
     return ProviderUnavailableError(f"CGV 릴레이 {operation}: {reason} [{code}, {elapsed:.2f}초]")
-
-
-def _text(row: dict[str, Any], key: str) -> str:
-    value = row.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise ResponseValidationError(f"CGV 릴레이 필드 {key}: 비어 있지 않은 문자열이 필요합니다.")
-    return value.strip()
-
-
-def _business_date(value: str) -> date:
-    if len(value) != 8 or not value.isascii() or not value.isdigit():
-        raise ResponseValidationError("CGV 릴레이 playDate: YYYYMMDD 형식이 필요합니다.")
-    try:
-        return date(int(value[:4]), int(value[4:6]), int(value[6:8]))
-    except ValueError:
-        raise ResponseValidationError("CGV 릴레이 playDate: 유효하지 않은 날짜입니다.") from None
 
 
 def _screening_time(day: date, value: str, field: str) -> datetime:
@@ -163,17 +155,14 @@ class CgvRelayProvider:
         """Cross-check a failed timetable without hiding errors as empty results."""
         started = time.monotonic()
         try:
-            response = self.client.get(
+            response = get_response(
+                self.client,
                 f"{self.settings.relay_base_url}{MOVIES_PATH}",
                 params={
                     "playDate": show_date.strftime("%Y%m%d"),
                     "theaterCode": branch_id,
                 },
-                headers={"Accept": "application/json", "User-Agent": "movie-alert/0.1"},
-                timeout=httpx.Timeout(
-                    self.http.timeout_seconds, connect=min(5.0, self.http.timeout_seconds)
-                ),
-                follow_redirects=False,
+                timeout_seconds=self.http.timeout_seconds,
             )
         except httpx.RequestError as error:
             raise _network_error(
@@ -233,14 +222,11 @@ class CgvRelayProvider:
         for attempt in range(self.http.max_retries + 1):
             started = time.monotonic()
             try:
-                response = self.client.get(
+                response = get_response(
+                    self.client,
                     url,
                     params=params,
-                    headers={"Accept": "application/json", "User-Agent": "movie-alert/0.1"},
-                    timeout=httpx.Timeout(
-                        self.http.timeout_seconds, connect=min(5.0, self.http.timeout_seconds)
-                    ),
-                    follow_redirects=False,
+                    timeout_seconds=self.http.timeout_seconds,
                 )
             except httpx.RequestError as error:
                 elapsed = time.monotonic() - started
