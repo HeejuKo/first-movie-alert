@@ -66,14 +66,16 @@ MIT 소스 라이선스와 공개 REST 제공은 장기 반복 조회·CGV 원�
 
 사용자 승인으로 `main`에 push해 실제 실행을 확인했다. Linux 공급자 checksum을 공식 서명 패키지로 보완한 뒤 [1b7b253의 CI](https://github.com/HeejuKo/first-movie-alert/actions/runs/39958615811)에서 Python 테스트 305개·Ruff·패키징·Terraform fmt/init/validate·앱 mock 3개·bootstrap mock 2개가 모두 통과했다. 자동 배포는 당시 비활성이라 생략됐다. branch protection은 아직 변경하지 않았다.
 
-## 3. 배포 자동화 — 초기 구성 진행 중
+## 3. 배포 자동화 — 실제 배포 성공
 
 1. S3 state 저장소의 public access 차단·암호화·versioning·lock과 비용을 검토한다. 로컬 state를 안전하게 백업한 뒤 기존 state를 마이그레이션한다. 빈 state로 기존 리소스를 재생성하지 않는다.
 2. Discord 비밀 관리 방식을 정한다. 현재 state·plan에 Webhook이 저장된다. GitHub secret으로 옮기는 것만으로 state의 비밀이 제거되지 않으며 과거 state 버전의 접근·보관도 고려한다.
 3. OIDC provider와 배포 역할을 별도로 마련하고 실제 저장소 `sub` 형식을 확인해 main 또는 보호 environment로 신뢰를 제한한다. PR에 배포 권한을 주지 않는다. bootstrap 권한이 있다고 가정하지 않는다.
 4. 검증 성공 후 코드·감시 설정을 패키징해 plan 검토·적용을 연결한다. 동시 배포를 막고 스케줄 활성 상태·종료일·롤백 절차를 보존한다.
 
-S3·OIDC·배포 역할을 `infra/bootstrap/`으로 생성했고 앱 state 이전을 확인했다. 이전 전후 10개 리소스·출력값이 동일했고 원격 plan은 생성·삭제 없이 Lambda 코드 갱신 1건만 포함했다. GitHub 변수·Webhook secret 등록과 배포 활성화도 완료했으며 실제 최초 OIDC 배포는 확인 중이다. 구성과 명령·권한 정리는 [배포 안내](deployment.md)를 따른다.
+S3·OIDC·배포 역할을 `infra/bootstrap/`으로 생성했고 앱 state 이전을 확인했다. 이전 전후 10개 리소스·출력값이 동일했고 원격 plan은 생성·삭제 없이 Lambda 코드 갱신 1건만 포함했다. [ec2ff2a의 최초 자동 배포](https://github.com/HeejuKo/first-movie-alert/actions/runs/39959022050)에서 검사·OIDC 인증·S3 연결·plan 보호 검사·apply까지 성공했다. `main` push는 코드·감시 설정을 함께 반영하며 PR·수동 실행은 검사만 한다. 구성과 명령·초기 권한 정리는 [배포 안내](deployment.md)를 따른다.
+
+KST 21:08:25~22:08:25의 읽기 전용 보고서에서는 완료 실행 60회·조회 오류 0·handler 실패 0, 평균 약 2.173초·최대 약 4.038초, 최대 메모리 221MB/256MB를 관측했다. 설정 전환 구간이 섞인 짧은 관측이다. 이후 22:11 실행의 누적 최대 메모리는 232MB였으므로 추가 관찰한다. 메모리 누수로 확정하지 않으며 SDK 클라이언트의 반복 생성 등도 검토 대상으로 남긴다. 장기 비용·신규 회차 실제 전송은 아직 확인 대기다.
 
 ## 4. 장애 감지와 복구 — 다음 단계
 

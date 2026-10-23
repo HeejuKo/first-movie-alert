@@ -2,7 +2,9 @@
 
 검사를 통과한 `main` push에서 코드와 감시 설정을 함께 배포하도록 준비했다. `DEPLOY_ENABLED=true`일 때만 배포 job이 실행된다. 초기 S3·OIDC 구성, 기존 state 이전, GitHub 설정과 최초 실제 배포 확인이 완료 기준이다. PR·수동 실행은 검사만 수행한다.
 
-2026-10-23 S3·OIDC·배포 역할 생성, state 이전, GitHub 설정과 CI 성공을 확인했다. 최초 자동 배포의 실제 OIDC 인증·plan·apply 확인을 진행 중이다.
+2026-10-23 S3·OIDC·배포 역할 생성, state 이전, GitHub 설정과 CI 성공을 확인했다. [최초 자동 배포](https://github.com/HeejuKo/first-movie-alert/actions/runs/39959022050)에서 실제 OIDC 인증·S3 연결·plan 검토·apply·임시 파일 정리까지 성공했다. Lambda는 `Active`·`LastUpdateStatus=Successful`이며 KST 22:11:53에 갱신됐다.
+
+배포된 TOML과 Python 소스 14개의 내용이 로컬과 일치했고 KST 22:12~22:15 자동 실행에서 각 감지 1·오류 0·중복 차단 1을 확인했다. 사용자는 초기 정책을 해제하고 S3 전용 개발 정책으로 교체했다. 이 검증은 신규 회차의 Discord 전송·장기 안정성 확인과 별개다.
 
 ## 초기 구성과 state 이전
 
@@ -62,6 +64,6 @@ S3에는 Public Access Block·BucketOwnerEnforced·SSE-S3 암호화·버전 관�
 
 Webhook은 GitHub encrypted secret → Terraform 환경 변수 → Lambda 환경 변수로 전달한다. **state·plan에는 여전히 평문 Webhook이 저장된다.** `sensitive`는 출력 마스킹이며 저장 내용을 제거하지 않는다. plan JSON은 메모리 안에서만 검토하고 공개 artifact로 올리지 않는다. 별도 Secrets Manager는 이번 구성에 포함하지 않았다.
 
-초기 구성 완료 후 콘솔에서 개발 사용자에 backend 전용 정책(bootstrap의 `developer_state_policy_json` 출력)을 연결한 뒤 `MovieAlertBootstrap`을 해제한다. 역할 관리·버킷 생성 권한을 일상 운영에 남기지 않는다. state 버전 장기 보관·접근 감사·비밀 분리는 후속 운영 개선 대상이다.
+초기 구성 완료 후 콘솔에서 개발 사용자에 backend 전용 정책(bootstrap의 `developer_state_policy_json` 출력)을 `MovieAlertRemoteStateAccess`로 연결한 뒤 `MovieAlertBootstrap`을 해제한다. 역할 관리·버킷 생성 권한을 일상 운영에 남기지 않는다. state 버전 장기 보관·접근 감사·비밀 분리는 후속 운영 개선 대상이다.
 
 2026-10-23 [서울 S3 Price List](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonS3/current/ap-northeast-2/index.json)에서 Standard 첫 구간은 GB-month당 USD 0.025, PUT/COPY/POST/LIST는 1,000회당 USD 0.0045, GET은 10,000회당 USD 0.0035를 확인했다. 모든 버전 합계 0.01GB·월 쓰기/LIST 1,000회·GET 10,000회를 가정하면 약 USD 0.00825이며 전송·세금·Free Tier 자격은 별도다. 버전 증가에 따라 저장 비용이 증가하며 현재 자동 만료 정책은 없다. 별도 KMS 키·NAT Gateway는 추가하지 않는다. [S3 가격](https://aws.amazon.com/s3/pricing/)
