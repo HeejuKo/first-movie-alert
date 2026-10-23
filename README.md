@@ -1,196 +1,87 @@
-# movie-alert
-영화 1회차 표 알리미
+# 1st Movie Alert
 
-설정 목록에서 선택한 지점 하나와 날짜 하나를 조회하고, 가장 이른 상영 회차가 발견되면 Discord로 알리는 프로젝트다. 예매 가능 여부가 미확인이어도 **상영시간표 발견** 알림을 보낸다. **CGV 단발 조회·같은 날짜의 제한된 병렬 조회·저장 응답 재생·알림 미리보기·Discord 전송·DynamoDB 중복 방지**를 구현했다. 예매 기능이나 결제 기능은 만들지 않는다.
+### 원하는 영화·지점·날짜의 **가장 이른 상영 회차**를 발견하면 Discord로 알려주는 서비스
 
-CGV 직접 조회는 이 실행 환경에서 HTTP 403이므로, 현재 예시 설정은 공개 제3자 릴레이(`mcp.aka.page`)의 정규화된 시간표 API를 사용한다. 릴레이의 지속성·CGV 이용 허용 범위·장기 운영은 추가 검증이 필요하다. 예매 가능 상태의 의미가 미확인이라 `booking_status`는 `unknown`을 유지하지만 알림을 차단하지 않는다. DynamoDB·Lambda·Scheduler를 Terraform으로 배포했고 실제 Discord 전송·중복 차단과 Scheduler 자동 실행을 확인했다. 현재 스케줄은 활성 상태이며 컴퓨터가 꺼져 있어도 AWS에서 실행된다. 검증 범위·비용·운영 절차는 [인프라 안내](infra/README.md)를 따른다.
+AWS에서 자동 실행되므로 노트북이 꺼져 있어도 감시를 계속한다. 현재는 CGV의 지점 하나와 날짜 하나를 선택해 1분마다 조회한다.
 
-운영 점검 명령, 확인된 릴레이의 IP별 하루 3,000회 한도, CI와 다음 단계는 [운영 확인 문서](docs/operations.md)에 정리했다. 현재 예시는 재시도 없이 한 지점·한 날짜를 1분마다 조회해 교차 확인 포함 최대 하루 2,880회로 제한한다. 수동 실행과 같은 IP의 다른 이용은 별도다.
+## 주요 기능
 
-연속 실패 운영 알림과 기본 dry-run 단건 회차 복구 도구도 추가했다. 필요한 권한·배포 전제·실행 명령·감지 범위는 [복구 안내](docs/recovery.md)를 따른다.
+- 설정 파일에서 영화·지점·날짜 선택
+- 첫 상영 회차 발견 시 Discord 알림
+- 같은 회차의 중복 알림 방지
+- 연속 조회·알림 처리 실패와 정상 복귀 알림
+- GitHub Actions를 통한 코드·설정 자동 배포
 
-검사를 통과한 `main` push에서 설정과 코드를 배포하는 workflow도 준비했다. S3 state 이전·OIDC·GitHub 설정과 활성화 절차는 [배포 안내](docs/deployment.md)를 따른다. 초기 구성이 끝나기 전에는 자동 배포가 실행되지 않는다.
+시간표 발견 알림은 **실제 예매 가능 여부를 보장하지 않는다.** 현재 알림에는 예매 가능 여부를 `미확인`으로 표시한다.
 
-## 코드 구조
+## 기술 스택
 
-`main.py`는 CLI 인자·저장 응답 재생·JSON 출력을 담당하고, `lambda_handler.py`는 스케줄 호출·실행 시간·조회 잠금을 제어한다. 두 진입점은 `application.py`의 Provider 생성·실제 조회·알림 전달 함수를 공유한다.
+Python 3.13 · uv · AWS Lambda · EventBridge Scheduler · DynamoDB · Discord Webhook · Terraform · GitHub Actions · CloudWatch
 
-`providers/common.py`는 Provider의 문자열·날짜 검증과 GET 요청 설정을 공유한다. 응답 구조·상영 시각 형식·재시도·영화 미공개 교차 확인은 각 Provider가 처리한다. `outcomes.py`는 알림 결과 타입과 실패 판정을 관리하며 CLI 종료 코드·Lambda 실행 결과·운영 로그 집계에서 같은 상태값을 사용한다.
+## 시작하기
 
-`config.py`는 파일 읽기·섹션별 설정 검증·감시 대상 선택을 나눠 처리한다. 선택하지 않은 지점도 검증하며 날짜 인덱스는 작성 순서를 따른다. 알림 상태·운영 상태·단건 복구는 `state.py`의 `DynamoDBClient` 인터페이스를 공유하고, Discord 실패 처리는 예외 타입과 `retry_after_seconds`로 판단한다.
-
-## 개발 환경
-
-Python 3.13과 [uv](https://docs.astral.sh/uv/getting-started/installation/)를 사용한다. 의존성은 `pyproject.toml`과 `uv.lock`으로 관리한다. 프로젝트의 `.venv`를 사용하며 기존 로컬 `venv/`와는 별도다.
+Python 3.13과 [uv](https://docs.astral.sh/uv/getting-started/installation/)가 필요하다.
 
 ```bash
 uv sync --locked
 ```
 
-## 지점 하나와 날짜 하나 선택
+### 감시 대상 선택
 
-[config/watch.example.toml](config/watch.example.toml) 맨 위의 두 숫자만 바꾸면 지점과 날짜가 함께 선택된다. **0부터 시작**하며 현재는 수유·10월 28일이다. 날짜나 지점이 비어 있어도 다른 후보를 자동 조회하지 않는다.
+[config/watch.example.toml](config/watch.example.toml) 상단의 두 인덱스를 변경한다.
 
 ```toml
 [selection]
-branch_index = 3
-date_index = 0
+branch_index = 3 # 수유
+date_index = 0   # dates 목록의 첫 번째 날짜
 ```
 
-| 번호 | `branch_index` 지점 | `date_index` 날짜 |
-| --- | --- | --- |
-| 0 | 강남 | 2026-10-28 |
-| 1 | 강변 | 2026-10-31 |
-| 2 | 성신여대입구 | 2026-11-04 |
-| 3 | 수유 | 2026-11-07 |
-| 4 | 연남 | — |
-| 5 | 홍대 | — |
+번호는 **0부터 시작**한다. 지점 번호는 `[[watches]]`, 날짜 번호는 선택한 지점에 적용되는 `dates` 목록의 작성 순서를 따른다. 지점별 번호는 파일 상단 주석에서 확인할 수 있다.
 
-예를 들어 `branch_index = 2`, `date_index = 1`이면 성신여대입구·10월 31일만 조회한다. 지점 번호는 아래 `[[watches]]`의 작성 순서, 날짜 번호는 선택한 지점에 적용되는 `dates` 목록의 작성 순서를 따른다. 범위 밖 번호·음수·누락·정수가 아닌 값은 외부 요청 전에 오류로 처리한다. 목록을 재정렬하면 같은 번호가 가리키는 대상도 바뀐다.
+영화·날짜 목록·감시 종료 시각(`active_until`)은 `[watch_defaults]`, 지점 이름과 ID는 `[[watches]]`에서 관리한다. 영화와 지점을 바꿀 때는 해당 이름과 ID를 함께 변경한다.
 
-날짜 후보를 추가·변경하려면 같은 파일의 `[watch_defaults].dates`를 수정한다.
+선택한 날짜가 지났거나 시간표가 없어도 다른 후보로 자동 이동하지 않으며, 감시 기간이 끝나면 조회를 중단한다.
 
-```toml
-[watch_defaults]
-dates = ["2026-10-28", "2026-10-31", "2026-11-04", "2026-11-07"]
-```
-
-지정하지 않은 날짜를 자동 조회하지 않으며, `weekdays`를 생략하면 요일 제한 없이 선택한 날짜를 조회한다. 실제 조회에서는 과거 날짜, 비활성 지점, 감시 실행 기간 밖의 규칙을 제외한다. 감시 실행 기간과 상영일 목록은 서로 다른 설정이다. 선택한 날짜가 지났어도 다음 날짜로 자동 이동하지 않는다. **AWS에서는 인덱스나 목록 변경 후 다시 배포해야 반영된다.**
-
-각 `[[watches]]`는 공통 설정을 상속하며 개별 블록의 같은 항목이 우선한다. 개별 `dates`가 있다면 `date_index`는 해당 목록에 적용된다. 선택하지 않은 후보도 설정 오류를 검증하지만 실제 조회 대상에서는 제외한다. `[selection]`을 생략한 기존 설정은 모든 등록 지점을 날짜순으로 조회하는 동작을 유지한다. 이 모드를 운영에 쓰기 전 호출 한도를 다시 계산한다.
-
-## 저장된 응답으로 실행
-
-아래 강남 fixture는 2026-10-24 응답이다. 재생 결과를 확인하려면 후보 날짜에 `2026-10-24`를 추가하고 그 `date_index`와 강남 `branch_index = 0`을 선택해야 한다. 날짜나 지점이 다르면 필터링되어 회차가 출력되지 않는다.
+### 조회와 알림 미리보기
 
 ```bash
-uv run movie-alert --config config/watch.example.toml \
-  --response tests/fixtures/cgv_gangnam_20261024.json
+uv run --locked movie-alert --config config/watch.example.toml
 ```
 
-이 명령은 외부 요청 없이 사용자가 제공한 응답을 재생하고 알림 미리보기를 출력한다. 다음 결과를 확인할 수 있다.
+한 번 조회한 결과와 알림 미리보기를 출력한다. Discord 메시지는 전송하지 않는다.
 
-| 항목 | 결과 |
-| --- | --- |
-| 영화 / 지점 | 치이카와 극장판 / CGV 강남 (`0056`) |
-| 대상일 | 2026-10-24 토요일 |
-| 첫 회차 | 10:00 KST |
-| `remaining_seats_hint` | 83 — 원본의 `frSeatCnt`, 의미 추가 검증 필요 |
-| `booking_status` | `unknown` |
-| 알림 미리보기 | 시작 전 회차라면 상영시간표 발견 / 실제 전송 없음 |
+### Discord 알림 전송
 
-원본 7회차와 출처는 [fixture 안내](tests/fixtures/README.md)에 기록했다. 재생 모드는 감시 실행 기간과 현재 시각의 영향을 받지 않으며, 설정된 영화·지점·날짜·요일·활성 여부는 적용한다. 출력의 `mode`는 `offline`이다. 현재 환경에 `.venv`가 이미 구성되어 있다면 `uv run movie-alert` 대신 `.venv/bin/movie-alert`로도 실행할 수 있다.
+먼저 AWS 로그인과 DynamoDB 테이블을 준비한다. 준비 방법은 [AWS 구성 안내](infra/README.md)를 따른다.
 
-성신여대입구의 사용자 제공 응답도 재생할 수 있다. `branch_index = 2`와 2026-10-24를 선택하면 다음 명령은 9회차 중 가장 이른 09:00 KST 회차를 선택한다. `remaining_seats_hint`는 46, `booking_status`는 `unknown`이며 실제 알림을 보내지 않는다.
+`.env`가 없다면 `.env.example`을 복사하고 다음 값을 입력한다. Webhook URL과 `.env`는 Git에 올리지 않는다.
 
-```bash
-.venv/bin/movie-alert --config config/watch.example.toml \
-  --response tests/fixtures/cgv_sungshin_20261024.json
-```
+| 환경 변수                    | 값                             |
+| ---------------------------- | ------------------------------ |
+| `DISCORD_WEBHOOK_URL`        | 알림을 받을 채널의 Webhook URL |
+| `MOVIE_ALERT_DYNAMODB_TABLE` | 준비한 DynamoDB 테이블 이름    |
+| `AWS_REGION`                 | AWS 리전, 예: `ap-northeast-2` |
 
-설정에는 6개 지점이 등록되어 있지만 저장 응답 재생에서는 해당 파일에 들어 있는 지점만 선택한다. 나머지 지점의 시간표를 네트워크로 추가 조회하지 않는다.
-
-## 실제 조회
-
-직접 CGV 요청은 웹사이트 내부 경로이며 공개 API 계약이나 자동 접근 허용을 의미하지 않는다. 현재 기본 설정은 다음 공개 릴레이 경로를 사용한다.
-
-```text
-GET https://cgv.co.kr/api/v1/booking/searchSchByMov
-coCd=A420&siteNo=0056&scnYmd=20261024&movNo=30001367&rtctlScopCd=08
-
-GET https://mcp.aka.page/api/cgv/timetable
-playDate=20261024&theaterCode=0056&movieCode=30001367&limit=50
-```
-
-사용자 브라우저에서는 직접 CGV 요청이 HTTP 200이었지만, **2026-10-21과 2026-10-22 이 개발 환경에서 쿠키 없이 직접 요청한 결과는 HTTP 403이었다.** 릴레이는 2026-10-24 강남 및 등록한 6개 지점 조회에서 HTTP 200과 시간표를 반환했다. [릴레이 서비스 명세](https://github.com/hmmhmmhm/daiso-mcp/blob/main/docs/service-reference.md)상 CGV 시간표 응답은 3분 캐시이므로 조회마다 새 데이터가 보인다고 보장하지 않는다. 릴레이가 중단되거나 원천 접근이 바뀌면 자동 감시도 중단된다. 2026-10-23 AWS의 단기 자동 조회는 확인했지만 장기 운영은 미검증이며, 같은 날 IP별 하루 3,000회 제한을 확인해 운영 구성을 재검토 중이다.
-
-허용된 조회 범위와 정상 접근 방법을 확인한 후 단발 실행한다.
-
-```bash
-uv run movie-alert --config config/watch.example.toml
-```
-
-- HTTP 연결·읽기 등의 타임아웃을 설정하고, 네트워크 오류와 일부 일시적 5xx에만 설정 횟수만큼 재시도한다. 예시 설정은 장애 감지를 늦추지 않도록 `max_retries = 0`이며, 같은 날짜의 지점을 최대 3개씩 병렬로 조회한다.
-- 401·403·429는 즉시 중단한다. 릴레이 연결 실패·타임아웃·5xx도 장애로 분류해 현재 병렬 묶음이 끝난 뒤 남은 지점과 이후 날짜를 조회하지 않는다. 아래 영화 미공개 교차 확인으로 빈 결과가 확인된 경우는 예외다. 이미 시작한 병렬 요청은 강제로 종료할 수 없어 해당 요청의 타임아웃까지 기다릴 수 있다. 429 이후 재호출은 서버의 재시도 지침을 확인한 뒤 결정한다. 브라우저 쿠키 복사, CAPTCHA 우회, 브라우저 User-Agent 위장 기능은 없다.
-- HTTP 오류, JSON 오류, 비정상 응답, 잘못된 회차는 오류로 보고한다. 시간표 요청이 `502`이거나 연결 후 `ReadTimeout`이면 같은 날짜·지점의 영화 목록을 교차 확인한다. 정상 응답의 날짜·지점·영화 코드 필드를 검증한 뒤 대상 영화가 없을 때만 빈 결과로 처리한다. 영화가 목록에 있거나 영화 목록도 실패하면 오류다. DNS·연결·TLS 실패는 빈 결과로 바꾸지 않는다. 일부 행만 버려 실제 첫 회차를 누락시키지 않는다. 서비스 전체 장애가 아닌 일반 오류는 다른 감시 규칙을 계속 처리한다. 실패가 하나라도 있으면 종료 코드 1을 반환한다.
-- `--response`가 없는 실행은 `Asia/Seoul` 기준 활성 기간과 대상일을 확인한다. 과거 상영일은 조회하지 않는다. 요일은 상영일에 적용하며 감시 실행일을 수요일·토요일로 제한하지 않는다.
-
-실행 장소·공인 IP가 바뀌면 DNS·방화벽·프록시·인증서·연결 경로가 영향을 줄 수 있다. 앱에는 로컬 IP를 고정하거나 조회 조건에 넣는 코드가 없다. 오류에는 `movies` 또는 `timetable` 경로, `ConnectTimeout`·`ReadTimeout`·`ProxyError` 등의 유형과 소요 시간을 표시하며, 원본 예외 문자열이나 프록시 인증 정보는 출력하지 않는다. DNS 또는 인증서 오류가 예외 체인에 보존되면 `DNSLookupError`·`TLSCertificateError`로 표시한다. 확인되지 않은 오류를 IP 차단이라고 단정하지 않는다.
-
-2026-10-23 현재 네트워크에서 릴레이 홈페이지는 HTTP 200(약 0.23초), 강남 2026-10-28 시간표는 HTTP 502(약 1.8초), 같은 날짜·지점의 영화 목록은 HTTP 200(약 1초, 대상 영화 없음)이었다. Python CLI도 전체 설정 조회에 성공했으며 강변의 10월 28일·31일 첫 회차를 반환하고 11월 4일은 모든 지점이 비어 종료했다. 과거 timeout의 원인은 재현되지 않아 확정하지 않았다. [릴레이 라우트 구현](https://github.com/hmmhmmhm/daiso-mcp/blob/main/src/api/routes/cgvRoutes.ts)상 영화 목록은 10분, 시간표는 3분 캐시다. 정상 시간표는 목록 조회 없이 사용하며, 교차 확인 결과도 실시간 공개 상태를 보장하지 않는다. 응답 대기 timeout 뒤 목록을 추가 조회하면 설정된 HTTP 타임아웃만큼 더 기다릴 수 있다.
-
-## Discord 알림과 중복 방지
-
-기본 실행은 항상 미리보기다. 실제 전송은 다음 조건을 모두 만족해야 한다.
-
-- 저장 응답 재생이 아닌 정상적인 실제 조회이며, 조회 오류가 없다.
-- 지정한 영화·지점·날짜의 전체 시간표에서 첫 회차를 발견했고 아직 시작하지 않았다.
-- 활성 감시 기간 안이며 DynamoDB의 조건부 쓰기로 처리 권한을 확보했다.
-- 사용자가 `--notify`로 실제 전송을 선택했다.
-
-예매 가능 여부는 전송 조건이 아니다. `unknown` 또는 `unavailable`이어도 유효한 첫 회차가 발견되면 전송한다. 제목에는 KST 상영일·요일과 `상영시간표 발견`을 표시하고 현재 CGV 응답은 `예매 가능 여부: 미확인`으로 표시한다. `booking_status`를 임의로 `available`로 바꾸거나 예매 오픈으로 표현하지 않는다. 이미 시작한 회차나 활성 감시 규칙이 없는 회차는 전송하지 않는다.
-
-상영관 정보는 CLI JSON·알림 미리보기·Discord 메시지에 표시하지 않는다. CLI의 `first_showtimes`는 `screen_id`·`screen_name`을 제외하며, 내부 회차 식별과 중복 방지에는 기존 식별 정보를 유지한다.
-
-정상적인 독립 조회가 가능한 환경에서 실제 전송을 실행하려면 다음 환경 변수가 필요하다. 로컬에서는 루트의 `.env`에 값을 입력한다. 파일이 없으면 `.env.example`을 `.env`로 복사한다. `.env`는 Git에서 제외되며 실제 비밀값을 예시 파일이나 공개 설정에 넣지 않는다. 앱은 `.env`를 자동으로 읽지 않으므로 아래처럼 `uv run --env-file .env`로 주입한다. 배포 환경에서는 환경 변수를 별도로 설정한다.
-
-| 환경 변수 | 용도 |
-| --- | --- |
-| `DISCORD_WEBHOOK_URL` | Discord HTTPS Webhook URL, 비밀값 |
-| `MOVIE_ALERT_DYNAMODB_TABLE` | 이미 생성된 상태 테이블 이름 |
-| `AWS_REGION` | 테이블이 있는 리전 (`AWS_DEFAULT_REGION`도 지원) |
+콘솔 단기 로그인용 `movie-alert` 프로필을 사용하는 경우:
 
 ```bash
 AWS_PROFILE=movie-alert uv run --locked --extra console-login --env-file .env movie-alert \
   --config config/watch.example.toml --notify
 ```
 
-위 명령은 `movie-alert` 프로필로 AWS 콘솔의 단기 로그인을 사용하는 로컬 예시다. 개발 IAM 사용자·프로필 준비, 비용 검토, DynamoDB Terraform 적용 및 실제 전송·중복 방지 검증은 [인프라 안내](infra/README.md)를 따른다. `console-login`은 이 로그인 방식에 필요한 선택 의존성이며 Lambda IAM 역할에는 필요하지 않다.
+시작 전 첫 회차를 새로 발견했을 때 전송하며, 이미 알린 회차는 다시 전송하지 않는다.
 
-테이블은 문자열 partition key `id`를 사용하며 숫자 `expires_at`을 TTL 속성으로 설정한다. 앱은 테이블을 생성하지 않는다. AWS 인증은 SDK의 기본 자격 증명 체인을 사용하며 운영 시 IAM 역할·단기 자격 증명을 우선한다. 설정 리전은 `boto3.Session`에 전달하여 임시 인증 갱신에도 적용한다. 실행 역할에는 해당 테이블의 `dynamodb:UpdateItem` 권한이 필요하다. 2026-10-23 서울 리전에 `movie-alert-state`를 Terraform으로 생성했고, 로컬 CLI에서 실제 전송 3건과 같은 회차의 중복 차단 3건을 확인했다. 비용·state 보관·정리 절차는 [인프라 안내](infra/README.md)를 따른다.
+## AWS 자동 실행과 배포
 
-처리 순서는 `PENDING 확보 → lease·소유권 확인 → Discord 전송 → SENT 저장`이다. 중복 키에는 Provider·영화·지점·영업일·상영관·실제 회차·시작 시각을 포함하며 좌석 수나 감지 시각이 바뀌어도 같은 키를 유지한다.
+AWS 초기 구성과 GitHub 배포 설정을 마치면, `main`에 push한 코드와 감시 설정은 검사를 통과한 뒤 자동 배포된다. 이후 EventBridge Scheduler가 Lambda를 매분 실행한다.
 
-- 다른 실행이 처리 중이거나 이미 완료·보류한 회차는 전송하지 않는다.
-- 시간표 발견 후 좌석 수나 예매 상태만 바뀌어도 같은 회차를 재전송하지 않는다.
-- 연결 실패와 HTTP 429는 `PENDING`에 재시도 시각을 저장한다. 같은 실행에서 즉시 재전송하지 않으며, 후속 실행에서 대기 시각과 최대 3회 시도 제한을 검사한다. 현재 스케줄러가 없으므로 후속 실행은 별도로 필요하다.
-- 전송 중 타임아웃·5xx·확인 응답 유실은 `UNCERTAIN`으로 보류한다. 영구적인 요청 거부는 `FAILED`로 보관한다. 두 상태 모두 자동으로 재전송하지 않는다.
-- Discord 성공 후 상태 저장에 실패하면 메시지 ID와 불확실한 결과를 출력하고 보류 저장을 시도한다. 보류 저장까지 실패하면 lease 만료 후 중복 가능성이 남으므로 운영자가 Discord와 상태를 대조해야 한다. 정확히 한 번 전송을 보장하지 않는다.
-- 처리 권한은 기본 120초 이상, 재시도 대기는 기본 60초 이상이다. 상태는 기본 30일 이상이며 감시 종료·상영 종료 이후 7일까지 포함하도록 연장한다. TTL 삭제 시점으로 lease를 판정하지 않는다.
-- Discord에는 `wait=true`로 전송하고 생성된 메시지 ID를 확인한다. 멘션을 비활성화하며 Webhook URL은 HTTPX 로그와 오류에서 보호한다.
+**지점·날짜 등 설정 변경도 재배포가 성공해야 AWS에 반영된다.** 초기 설정과 배포 방법은 [배포 안내](docs/deployment.md)를 참고한다.
 
-`--response`와 `--notify`는 함께 사용할 수 없다. 저장된 시간표를 현재 발견한 시간표로 오인해 알리는 것을 막기 위한 제한이다. 실제 조회 오류 또는 전송·상태 저장 오류가 있으면 종료 코드 1, 설정 오류는 2를 반환한다.
+현재 조회는 제3자 CGV 릴레이를 사용한다. 릴레이의 캐시·호출 제한·가용성에 따라 감지가 지연되거나 조회가 실패할 수 있다. 감시 범위나 주기를 늘리기 전 [운영 안내](docs/operations.md)의 요청 한도를 확인한다.
 
-## 설정과 판정
+## 상세 문서
 
-[config/watch.example.toml](config/watch.example.toml)의 `[watch_defaults]`에 공통 날짜 목록·영화 정보·회차 정책·실행 기간을 지정하고, `[[watches]]`에 지점 이름과 ID를 적는다. 선택 항목인 `weekdays`는 ISO 요일(월=1~일=7)이며 생략하면 모든 요일을 허용한다. 기존처럼 각 `[[watches]]`에 모든 항목을 적는 설정도 지원한다. 날짜를 자동 확장하지 않으며 CLI는 한 번만 실행한다.
-
-- 예시에는 6개 지점과 사용자가 지정한 날짜 목록이 포함되어 있다. 지점 ID는 사용자가 CGV 화면에서 제공한 값이며 앞의 0을 유지하는 문자열이다. 공개 릴레이로 2026-10-24의 6개 지점 조회, 10월 28일·31일의 시간표 알림을 확인했다. 다른 날짜의 데이터와 장기 가용성은 추가 검증이 필요하다.
-- 조회 코드 `coCd=A420`, `rtctlScopCd=08`은 캡처된 값 그대로 `[cgv]` 설정에 둔다. 다른 값의 지원 범위와 상세 의미는 미확인이다.
-- 현재 설정의 실행 종료는 KST `2026-11-08T00:00:00+09:00` 미만이다. 종료 후 자동 연장하지 않는다.
-- 첫 회차는 영화·지점·상영일별 전체 응답의 최소 `scnsrtTm`으로 고른다. `scnSseq=1`만 찾거나 예매 가능한 뒤 회차를 첫 회차로 승격하지 않는다. 동시에 가장 이른 여러 상영관은 모두 반환한다.
-- 원본의 영업일을 유지하면서 `scnendTm=2509`를 다음 날 01:09 KST로 변환한다. 시작 시각은 `scnsrtTm`을 사용하며 `rlMovStartTm`의 의미는 추가 확인 대상이다.
-- `frSeatCnt`, `frtmpSeatCnt`, `cntlYn` 등의 의미와 미오픈·매진·취소 사례는 추가 확인이 필요하다. **좌석 수가 양수여도 현재 CGV 파서는 예매 가능으로 확정하지 않는다.** `booking_status=unknown`을 유지하면서 시간표 존재를 알린다.
-- 현재 fixture의 완전성, 다른 상영관·포맷과 페이지네이션 여부도 실제 응답으로 검증해야 한다. KOBIS는 향후 영화 메타데이터 보조 기능으로 추가할 수 있으며 현재 의존하지 않는다.
-
-## AWS 자동 실행
-
-Lambda 핸들러는 `movie_alert.lambda_handler.handler`다. Scheduler가 매분 호출하고 각 실행에서 한 번 조회한다. 추가 30초 대기는 없다. 실제 간격은 Scheduler 정밀도·조회 시간에 영향을 받는다. 예매 상태 판정·중복 키·Discord 전송 정책은 CLI와 같다. 명시적인 `notify: true` 이벤트에서만 실제 전송하며 기본 이벤트는 미리보기다.
-
-```bash
-uv run --locked python scripts/build_lambda.py
-```
-
-이 명령은 AWS를 변경하지 않고 Linux ARM64 운영 패키지를 만든다. 실행 환경·권한 경계·비용 검토·배포·검증·스케줄 활성화·중지 절차는 [인프라 안내](infra/README.md)를 따른다. 스케줄은 기본 비활성으로 배포하고 Lambda 실제 조회와 알림 상태를 검증한 뒤 활성화한다. 감시 설정은 ZIP에 포함되므로 날짜·지점 변경 후 다시 배포해야 반영된다. 민감값이 있는 Terraform state와 plan은 Git에서 제외한다.
-
-## 검사
-
-일반 테스트는 실제 CGV·릴레이·AWS·Discord에 요청하지 않는다. 원본 응답과 HTTP Mock으로 검증한다.
-
-```bash
-uv run pytest -q
-uv run ruff check src tests scripts
-uv run ruff format --check src tests scripts
-```
-
-핵심 검증은 공통 날짜의 전체 지점 적용, 미지정 날짜 제외, 요일 제한 생략, 첫 회차 선정, 심야 시각, 불완전 응답 거부, 직접 CGV·릴레이의 403·429·5xx 처리, 실행 종료 경계, 상태 미확인 회차의 알림·중복 방지, Discord 실패 분류·비밀값 보호, DynamoDB 조건부 요청, 알림과 상태 저장의 실패 복구다. Lambda 테스트는 실제 대기 없이 두 차례 확인·기간 종료·지연 호출·남은 시간 부족·오류의 실행 실패 반영을 검증한다. 테스트에서 사용하는 `available` 회차는 합성 사례이며 CGV 원본 응답의 상태 의미가 검증됐다는 뜻이 아니다. 실제 DynamoDB를 연결한 로컬 CLI의 Discord 전송·상태 저장·재실행 중복 차단은 확인했다. 실환경 동시 실행·장애 복구 검증은 남아 있다.
+- [AWS 구성과 비용](infra/README.md)
+- [GitHub Actions 자동 배포](docs/deployment.md)
+- [운영 점검과 릴레이 제약](docs/operations.md)
+- [장애 알림과 상태 복구](docs/recovery.md)
