@@ -1,5 +1,8 @@
 """CGV 시간표를 공개 제3자 릴레이의 정규화된 응답에서 읽는 Provider."""
 
+import logging
+import socket
+import ssl
 import time
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
@@ -21,6 +24,40 @@ from movie_alert.providers.base import (
 TIMETABLE_PATH = "/api/cgv/timetable"
 MOVIES_PATH = "/api/cgv/movies"
 RETRYABLE_STATUSES = {500, 502, 503, 504}
+logger = logging.getLogger(__name__)
+
+
+def _network_error(
+    operation: str, error: httpx.RequestError, elapsed: float
+) -> ProviderUnavailableError:
+    """Describe the failed phase without exposing raw exception URLs or credentials."""
+    code = type(error).__name__
+    if isinstance(error, httpx.ConnectTimeout):
+        reason = "연결 시간 초과. 현재 네트워크의 연결 경로·방화벽을 확인하세요."
+    elif isinstance(error, httpx.ReadTimeout):
+        reason = "응답 대기 시간 초과. 릴레이 또는 중계 경로의 응답이 지연됐습니다."
+    elif isinstance(error, httpx.WriteTimeout):
+        reason = "요청 전송 시간 초과. 현재 네트워크의 연결 상태를 확인하세요."
+    elif isinstance(error, httpx.PoolTimeout):
+        reason = "HTTP 연결 풀 대기 시간 초과. 동시 요청 수와 연결 풀을 확인하세요."
+    elif isinstance(error, httpx.ProxyError):
+        reason = "프록시 연결 실패. HTTP_PROXY·HTTPS_PROXY 등 프록시 설정을 확인하세요."
+    elif isinstance(error, httpx.ConnectError):
+        cause: BaseException | None = error
+        reason = "연결에 실패했습니다. DNS·TLS·방화벽·프록시 상태를 확인하세요."
+        while cause is not None:
+            if isinstance(cause, socket.gaierror):
+                code = "DNSLookupError"
+                reason = "DNS 이름 조회 실패. 현재 네트워크의 DNS 설정을 확인하세요."
+                break
+            if isinstance(cause, ssl.SSLCertVerificationError):
+                code = "TLSCertificateError"
+                reason = "TLS 인증서 검증 실패. 네트워크 인증서·CA 설정을 확인하세요."
+                break
+            cause = cause.__cause__
+    else:
+        reason = "통신에 실패했습니다. 현재 네트워크와 릴레이 상태를 확인하세요."
+    return ProviderUnavailableError(f"CGV 릴레이 {operation}: {reason} [{code}, {elapsed:.2f}초]")
 
 
 def _text(row: dict[str, Any], key: str) -> str:
@@ -123,7 +160,8 @@ class CgvRelayProvider:
         self.sleep = sleep
 
     def _movie_is_listed(self, movie_id: str, branch_id: str, show_date: date) -> bool:
-        """502가 영화 미공개인지 릴레이 장애인지 구분하기 위해 영화 목록을 확인한다."""
+        """Cross-check a failed timetable without hiding errors as empty results."""
+        started = time.monotonic()
         try:
             response = self.client.get(
                 f"{self.settings.relay_base_url}{MOVIES_PATH}",
@@ -137,9 +175,9 @@ class CgvRelayProvider:
                 ),
                 follow_redirects=False,
             )
-        except httpx.RequestError:
-            raise ProviderUnavailableError(
-                "CGV 릴레이 영화 목록 요청 시간이 초과되었거나 연결에 실패했습니다."
+        except httpx.RequestError as error:
+            raise _network_error(
+                "영화 목록 /api/cgv/movies", error, time.monotonic() - started
             ) from None
         if response.status_code in (401, 403):
             raise AccessDeniedError(f"CGV 릴레이 접근 제한(HTTP {response.status_code})입니다.")
@@ -165,12 +203,24 @@ class CgvRelayProvider:
         movies = data.get("movies") if isinstance(data, dict) else None
         if not isinstance(movies, list):
             raise ResponseValidationError("CGV 릴레이 data.movies는 목록이어야 합니다.")
+        if data.get("playDate") != show_date.strftime("%Y%m%d"):
+            raise ResponseValidationError("CGV 릴레이 영화 목록의 상영일이 요청과 다릅니다.")
+        filters = data.get("filters")
+        if not isinstance(filters, dict) or filters.get("theaterCode") != branch_id:
+            raise ResponseValidationError("CGV 릴레이 영화 목록의 지점이 요청과 다릅니다.")
+        movie_ids = set()
         for movie in movies:
             if not isinstance(movie, dict):
                 raise ResponseValidationError("CGV 릴레이 영화 목록의 각 항목은 객체여야 합니다.")
-            if movie.get("movieCode") == movie_id:
-                return True
-        return False
+            movie_ids.add(_text(movie, "movieCode"))
+        if movie_id not in movie_ids:
+            logger.info(
+                "CGV 릴레이 영화 목록에 대상 영화 없음: 지점=%s · %s · 영화=%s",
+                branch_id,
+                show_date,
+                movie_id,
+            )
+        return movie_id in movie_ids
 
     def fetch_showtimes(self, movie_id: str, branch_id: str, show_date: date) -> list[Showtime]:
         url = f"{self.settings.relay_base_url}{TIMETABLE_PATH}"
@@ -181,6 +231,7 @@ class CgvRelayProvider:
             "limit": "50",
         }
         for attempt in range(self.http.max_retries + 1):
+            started = time.monotonic()
             try:
                 response = self.client.get(
                     url,
@@ -191,11 +242,20 @@ class CgvRelayProvider:
                     ),
                     follow_redirects=False,
                 )
-            except httpx.RequestError:
+            except httpx.RequestError as error:
+                elapsed = time.monotonic() - started
+                if isinstance(error, httpx.ReadTimeout):
+                    logger.warning(
+                        "CGV 릴레이 시간표 응답 대기 시간 초과 [ReadTimeout, %.2f초]: "
+                        "지점=%s · %s; 영화 목록 확인",
+                        elapsed,
+                        branch_id,
+                        show_date,
+                    )
+                    if not self._movie_is_listed(movie_id, branch_id, show_date):
+                        return []
                 if attempt == self.http.max_retries:
-                    raise ProviderUnavailableError(
-                        "CGV 릴레이 요청 시간이 초과되었거나 연결에 실패했습니다."
-                    ) from None
+                    raise _network_error("시간표 /api/cgv/timetable", error, elapsed) from None
                 self.sleep(self.http.retry_delay_seconds * 2**attempt)
                 continue
             if response.status_code in (401, 403):
