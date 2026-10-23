@@ -39,16 +39,16 @@ def test_missing_environment_is_clear_and_does_not_read_aws_credentials(monkeypa
         "AWS_DEFAULT_REGION",
     ):
         monkeypatch.delenv(key, raising=False)
-    client = Mock()
-    monkeypatch.setattr(runtime.boto3, "client", client)
+    session_factory = Mock()
+    monkeypatch.setattr(runtime.boto3, "Session", session_factory)
     with pytest.raises(ConfigError, match="DISCORD_WEBHOOK_URL"):
         notification_environment()
-    client.assert_not_called()
+    session_factory.assert_not_called()
 
 
 def test_runtime_has_bounded_sdk_settings_without_connecting(monkeypatch):
     client_factory = Mock(return_value=Mock())
-    monkeypatch.setattr(runtime.boto3, "client", client_factory)
+    monkeypatch.setattr(runtime.boto3, "Session", Mock(return_value=Mock(client=client_factory)))
     with httpx.Client(
         transport=httpx.MockTransport(lambda request: pytest.fail("unexpected HTTP"))
     ) as client:
@@ -60,9 +60,44 @@ def test_runtime_has_bounded_sdk_settings_without_connecting(monkeypatch):
 
 
 def test_sdk_setup_error_is_sanitized(monkeypatch):
-    monkeypatch.setattr(runtime.boto3, "client", Mock(side_effect=NoRegionError()))
+    monkeypatch.setattr(runtime.boto3, "Session", Mock(side_effect=NoRegionError()))
     with httpx.Client() as client, pytest.raises(ConfigError, match="AWS"):
         create_dispatcher(ENVIRONMENT, client, 10, 30 * 86400)
+
+
+def test_session_region_reaches_signin_refresh_without_profile_region(monkeypatch, tmp_path):
+    config_file = tmp_path / "aws_config"
+    config_file.write_text("[profile console-without-region]\n")
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "no_credentials"))
+    monkeypatch.setenv("AWS_PROFILE", "console-without-region")
+    monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    real_session = runtime.boto3.Session
+    sessions = []
+
+    def session_factory(**kwargs):
+        session = real_session(
+            aws_access_key_id="synthetic-access-key",
+            aws_secret_access_key="synthetic-secret-key",
+            **kwargs,
+        )
+        sessions.append(session)
+        return session
+
+    monkeypatch.setattr(runtime.boto3, "Session", session_factory)
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda request: pytest.fail("unexpected HTTP"))
+    ) as client:
+        create_dispatcher(ENVIRONMENT, client, 10, 30 * 86400)
+    assert len(sessions) == 1
+    # The login credential provider creates Sign-In clients without a region override.
+    # This constructs the SDK client only; no AWS operation is invoked.
+    signin = sessions[0].client("signin")
+    try:
+        assert signin.meta.region_name == ENVIRONMENT.region
+    finally:
+        signin.close()
 
 
 def test_started_showtimes_do_not_initialize_aws_or_discord(config, showtimes, monkeypatch):

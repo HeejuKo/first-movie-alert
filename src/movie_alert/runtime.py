@@ -41,9 +41,10 @@ def create_dispatcher(
 ) -> AlertDispatcher:
     notifier = DiscordNotifier(client, environment.webhook_url, timeout_seconds)
     try:
-        dynamodb = boto3.client(
+        # Credential refresh creates its own regional Sign-In client from this session.
+        session = boto3.Session(region_name=environment.region)
+        dynamodb = session.client(
             "dynamodb",
-            region_name=environment.region,
             config=Config(
                 connect_timeout=5,
                 read_timeout=5,

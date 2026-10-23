@@ -1,6 +1,6 @@
-# DynamoDB 연결 준비
+# DynamoDB 구성과 실행
 
-현재 구성은 알림 중복 방지용 DynamoDB 테이블 하나만 관리한다. Lambda·Scheduler·IAM 사용자·IAM 정책은 생성하지 않는다. 실제 AWS 적용과 Discord 전체 경로 검증은 아직 하지 않았다.
+현재 Terraform 구성은 알림 중복 방지용 DynamoDB 테이블 하나를 관리한다. 2026-10-23 실제 적용 후 로컬 CLI에서 Discord 전송·완료 상태 저장·재실행 시 중복 차단을 확인했다. Lambda·Scheduler·IAM 사용자·IAM 정책은 이 구성에서 생성하지 않으며 자동 실행은 아직 없다.
 
 ## 1. 개발용 AWS 로그인
 
@@ -23,6 +23,8 @@ uv sync --locked --extra console-login
 ```
 
 브라우저에서는 `movie-alert-dev` 세션을 선택한다. `GetCallerIdentity`의 ARN이 루트가 아닌 의도한 IAM 사용자인지 확인한다. 새 프로필을 선택해 오래된 `default` 인증과 분리한다. `AWS_ACCESS_KEY_ID` 등 기존 인증 환경 변수가 설정돼 있으면 그 값이 프로필보다 우선할 수 있으므로 실행 환경을 확인한다. 장기 Access Key를 발급하거나 `.env`에 넣는 절차는 필요 없다. 단기 로그인 세션이 끝나면 `aws login`을 다시 실행한다.
+
+앱은 설정 리전을 `boto3.Session`에 전달한다. 프로필에 리전이 없어도 임시 자격 증명 갱신에 필요한 Sign-In 클라이언트가 같은 리전을 사용하도록 하기 위한 것이다.
 
 개발 IAM 사용자의 생성은 콘솔 로그인을 위한 초기 준비다. Terraform은 이 사용자를 생성·변경하지 않는다. 향후 Lambda 실행 역할에는 아래 개발 권한 전체를 주지 않고 `runtime_dynamodb_policy_json`의 테이블별 `UpdateItem`만 허용한다.
 
@@ -61,7 +63,7 @@ AWS_PROFILE=movie-alert terraform -chdir=infra apply notification.tfplan
 terraform -chdir=infra output
 ```
 
-적용 전에 plan이 의도한 테이블 한 개의 생성만 포함하는지 확인한다. 동명 테이블이 이미 있으면 새로 만들거나 설정을 덮어쓰지 말고 테이블 구조·TTL·과금 모델을 확인한 뒤 import와 차이를 검토한다.
+최초 적용 전에 plan이 의도한 테이블 한 개의 생성만 포함하는지 확인한다. 이후 변경도 새로운 plan으로 검토하며 이미 적용한 plan을 재사용하지 않는다. Terraform state에 없는 동명 테이블이 이미 있으면 새로 만들거나 설정을 덮어쓰지 말고 테이블 구조·TTL·과금 모델을 확인한 뒤 import와 차이를 검토한다.
 
 초기 state는 `infra/terraform.tfstate`에 로컬 저장한다. state·plan·실제 tfvars·`.terraform/`는 Git에서 제외하며 state를 외부에 공개하거나 삭제하지 않는다. 로컬 state와 백업의 접근 권한을 제한하고 안전하게 보관한다. `.terraform.lock.hcl`은 커밋한다. 여러 사람이 적용하거나 CI 배포를 시작하기 전에 암호화·접근 통제·잠금이 있는 원격 backend를 도입한다.
 
@@ -86,4 +88,10 @@ AWS_PROFILE=movie-alert uv run --locked --extra console-login --env-file .env mo
 3. 같은 명령을 다시 실행해 같은 회차가 `not_claimed`이며 추가 메시지가 생기지 않는지 확인한다.
 4. `state_error`·`uncertain`·`failed`가 있으면 실행이 완료된 것으로 간주하지 않고 원인을 확인한다. 임의로 상태를 지우거나 Webhook만 직접 호출해 우회하지 않는다.
 
-이 단계가 성공하기 전까지 DynamoDB 실연동·실제 중복 방지·AWS 운영이 검증됐다고 설명하지 않는다.
+2026-10-23 실제 검증 결과는 다음과 같다.
+
+- 테이블은 `ACTIVE`, TTL은 `expires_at`에 `ENABLED`, 삭제 보호는 활성 상태였다. 적용 후 새 plan은 변경 없음이었다.
+- 강변 10월 28일 10:30, 수유 10월 28일 11:00, 강변 10월 31일 14:40(KST) 첫 회차 3건이 `sent`로 처리됐다. Discord 메시지 ID 확인과 DynamoDB `SENT` 기록이 모두 성공했다.
+- 임시 인증 갱신 시 리전 누락을 수정한 뒤 같은 설정으로 다시 실행했을 때, 같은 3건은 모두 `not_claimed`였으며 추가 전송이 없었다.
+
+이는 로컬 단발 실행의 실연동 검증이다. Lambda에서의 조회·실행, Scheduler 자동 감시, 실환경 동시 실행·장애 복구는 별도 검증이 필요하다.
