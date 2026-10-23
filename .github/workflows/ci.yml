@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   checks:
@@ -64,3 +64,78 @@ jobs:
 
       - name: Terraform mock tests without AWS access
         run: terraform -chdir=infra test -no-color
+
+      - name: Bootstrap Terraform checks without AWS access
+        run: |
+          terraform -chdir=infra/bootstrap init -backend=false -input=false -lockfile=readonly
+          uv run --locked python scripts/validate_terraform.py --directory infra/bootstrap
+          terraform -chdir=infra/bootstrap test -no-color
+
+  deploy:
+    name: Deploy to AWS
+    needs: checks
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: movie-alert-production-deploy
+      cancel-in-progress: false
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_VAR_expected_account_id: ${{ vars.AWS_ACCOUNT_ID }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+    steps:
+      - name: Checkout tested commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.13.4"
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --locked --no-dev
+
+      - name: Authenticate with AWS OIDC
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
+          aws-region: ap-northeast-2
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-duration-seconds: 1800
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.17.0"
+          terraform_wrapper: false
+
+      - name: Prepare existing S3 backend
+        env:
+          STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: |
+          uv run --locked python scripts/configure_backend.py --bucket "$STATE_BUCKET" --account "$AWS_ACCOUNT_ID"
+          terraform -chdir=infra init -input=false -lockfile=readonly -backend-config=backend.local.hcl
+
+      - name: Plan deployment with schedule enabled
+        run: uv run --locked python scripts/terraform_lambda.py plan --enable-schedule
+
+      - name: Reject missing state, creation, deletion and replacement
+        run: uv run --locked python scripts/review_plan.py
+
+      - name: Apply reviewed plan
+        run: uv run --locked python scripts/terraform_lambda.py apply
+
+      - name: Remove local secret-bearing files
+        if: always()
+        run: |
+          rm -f infra/lambda.tfplan
+          rm -f infra/terraform.tfstate infra/terraform.tfstate.backup

@@ -2,7 +2,7 @@
 
 현재 DynamoDB·Lambda·Scheduler·실행 역할·7일 보존 로그 그룹을 Terraform으로 관리한다. 2026-10-23 로컬 CLI의 실제 Discord 전송·상태 저장과 배포한 Lambda의 자동 조회·중복 차단을 확인했다. 스케줄은 활성 상태이며 컴퓨터가 꺼져 있어도 실행된다. 개발 IAM 사용자와 초기 관리형 정책은 콘솔에서 준비한다.
 
-일별 운영 집계 도구, 신규 전송·비용 확인 기준, 릴레이 호출 한도와 CI 도입 상태는 [운영 확인 문서](../docs/operations.md)를 따른다.
+일별 운영 집계 도구, 신규 전송·비용 확인 기준, 릴레이 호출 한도와 CI 도입 상태는 [운영 확인 문서](../docs/operations.md)를 따른다. S3 state·GitHub OIDC·자동 배포 초기 구성과 완료 조건은 [배포 안내](../docs/deployment.md)에 정리했다.
 
 ## 1. 개발용 AWS 로그인
 
@@ -46,7 +46,7 @@ On-demand Standard 단가는 읽기 100만 단위당 USD 0.1355, 쓰기 100만 �
 
 ## 3. Terraform 검증과 적용
 
-Terraform 1.7 이상·2 미만을 사용한다. 현재 검증 버전은 1.17.0이며 설치 방법은 [공식 문서](https://developer.hashicorp.com/terraform/install)를 따른다.
+Terraform 1.10 이상·2 미만을 사용한다. 현재 검증 버전은 1.17.0이며 설치 방법은 [공식 문서](https://developer.hashicorp.com/terraform/install)를 따른다.
 
 ```bash
 terraform -chdir=infra init

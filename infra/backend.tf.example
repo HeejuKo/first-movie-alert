@@ -1,0 +1,4 @@
+# Copy to backend.local.tf only after the protected bucket exists and state migration is ready.
+terraform {
+  backend "s3" {}
+}

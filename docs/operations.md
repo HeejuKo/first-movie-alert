@@ -58,22 +58,22 @@ KST 20:35~20:50:48 구간의 모든 페이지를 읽었으며 마지막 수집 �
 
 MIT 소스 라이선스와 공개 REST 제공은 장기 반복 조회·CGV 원천 이용 허용·가용성 보장을 뜻하지 않는다. 운영자에게 개인 알림 목적, 영화·지점·날짜 수, 교차 확인 포함 요청 상한, 기간을 설명하고 허용 주기와 별도 조건을 확인해야 한다. 문의를 전송하지는 않았다.
 
-## 2. GitHub Actions CI — 코드 작성·로컬 검증
+## 2. GitHub Actions CI — 원격 실행 확인 중
 
 [CI workflow](../.github/workflows/ci.yml)는 push·PR·수동 실행에서 Python 3.13 / 고정 uv로 lockfile 의존성을 설치하고 pytest, Ruff lint/format을 검사한다. 이어 Lambda ZIP 빌드와 Terraform 1.17.0의 fmt·init·validate·mock test를 실행한다.
 
-AWS 인증·Webhook·운영 state·배포 권한은 사용하지 않는다. init은 `-backend=false -lockfile=readonly`이며 모의 테스트는 리소스를 만들지 않는다. action은 commit SHA로 고정하고 GitHub token은 `contents: read`만 허용한다. [GitHub 보안 지침](https://docs.github.com/en/actions/reference/security/secure-use), [uv 연동](https://docs.astral.sh/uv/guides/integration/github/)
+검사 job은 AWS 인증·Webhook·운영 state·배포 권한을 사용하지 않는다. init은 `-backend=false -lockfile=readonly`이며 앱과 bootstrap 모의 테스트는 리소스를 만들지 않는다. action은 commit SHA로 고정하고 검사 token은 `contents: read`만 허용한다. [GitHub 보안 지침](https://docs.github.com/en/actions/reference/security/secure-use), [uv 연동](https://docs.astral.sh/uv/guides/integration/github/)
 
-사용자가 커밋을 push한 이후 원격 실행 결과를 확인한다. 로컬 검사와 GitHub 실제 실행 성공은 별개다. branch protection은 아직 변경하지 않았다.
+사용자 승인으로 `main`에 push해 실제 실행을 확인했다. Python·Ruff·패키징·Terraform init은 통과했으며 Terraform validate에서 Linux 공급자 checksum 불일치가 확인돼 lockfile을 보완하고 있다. 로컬 검사와 GitHub 전체 실행 성공은 별개다. branch protection은 아직 변경하지 않았다.
 
-## 3. 배포 자동화 — 다음 단계
+## 3. 배포 자동화 — 초기 구성 진행 중
 
 1. S3 state 저장소의 public access 차단·암호화·versioning·lock과 비용을 검토한다. 로컬 state를 안전하게 백업한 뒤 기존 state를 마이그레이션한다. 빈 state로 기존 리소스를 재생성하지 않는다.
 2. Discord 비밀 관리 방식을 정한다. 현재 state·plan에 Webhook이 저장된다. GitHub secret으로 옮기는 것만으로 state의 비밀이 제거되지 않으며 과거 state 버전의 접근·보관도 고려한다.
 3. OIDC provider와 배포 역할을 별도로 마련하고 실제 저장소 `sub` 형식을 확인해 main 또는 보호 environment로 신뢰를 제한한다. PR에 배포 권한을 주지 않는다. bootstrap 권한이 있다고 가정하지 않는다.
 4. 검증 성공 후 코드·감시 설정을 패키징해 plan 검토·적용을 연결한다. 동시 배포를 막고 스케줄 활성 상태·종료일·롤백 절차를 보존한다.
 
-원격 state·OIDC·배포 workflow는 아직 도입하지 않았다. [S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3), [GitHub OIDC](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws)
+S3·OIDC·배포 역할을 `infra/bootstrap/`으로 생성했고 앱 state 이전을 확인했다. 이전 전후 10개 리소스·출력값이 동일했고 원격 plan은 생성·삭제 없이 Lambda 코드 갱신 1건만 포함했다. opt-in 배포 workflow도 작성했으며 GitHub 설정·실제 최초 OIDC 배포까지 확인해야 완료다. 구성과 명령·권한 정리는 [배포 안내](deployment.md)를 따른다.
 
 ## 4. 장애 감지와 복구 — 다음 단계
 

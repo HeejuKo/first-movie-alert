@@ -7,6 +7,8 @@ CGV 직접 조회는 이 실행 환경에서 HTTP 403이므로, 현재 예시 �
 
 운영 점검 명령, 확인된 릴레이의 IP별 하루 3,000회 한도, CI와 다음 단계는 [운영 확인 문서](docs/operations.md)에 정리했다. 현재 예시는 재시도 없이 한 지점·한 날짜를 1분마다 조회해 교차 확인 포함 최대 하루 2,880회로 제한한다. 수동 실행과 같은 IP의 다른 이용은 별도다.
 
+검사를 통과한 `main` push에서 설정과 코드를 배포하는 workflow도 준비했다. S3 state 이전·OIDC·GitHub 설정과 활성화 절차는 [배포 안내](docs/deployment.md)를 따른다. 초기 구성이 끝나기 전에는 자동 배포가 실행되지 않는다.
+
 ## 개발 환경
 
 Python 3.13과 [uv](https://docs.astral.sh/uv/getting-started/installation/)를 사용한다. 의존성은 `pyproject.toml`과 `uv.lock`으로 관리한다. 프로젝트의 `.venv`를 사용하며 기존 로컬 `venv/`와는 별도다.

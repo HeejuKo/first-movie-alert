@@ -28,7 +28,10 @@ def main() -> None:
     environment["TF_VAR_discord_webhook_url"] = webhook
     environment["TF_VAR_deploy_lambda"] = "true"
     environment["TF_VAR_schedule_enabled"] = str(args.enable_schedule).lower()
-    environment.setdefault("AWS_PROFILE", "movie-alert")
+    if not environment.get("AWS_ACCESS_KEY_ID") and not environment.get(
+        "AWS_WEB_IDENTITY_TOKEN_FILE"
+    ):
+        environment.setdefault("AWS_PROFILE", "movie-alert")
     os.umask(0o077)
     if args.action == "plan":
         build(args.config)

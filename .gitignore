@@ -233,6 +233,8 @@ AGENTS.md
 *.tfvars
 *.tfvars.json
 infra/iam/*.local.json
+infra/backend.local.tf
+infra/backend.local.hcl
 crash.log
 crash.*.log
 
