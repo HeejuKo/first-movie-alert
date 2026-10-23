@@ -39,9 +39,9 @@ EXAMPLE = ROOT / "config/watch.example.toml"
         ('source = "mcp_relay"', 'source = "unknown"'),
     ],
 )
-def test_invalid_config_fails_before_requests(tmp_path, old, new):
+def test_invalid_config_fails_before_requests(tmp_path, config_text, old, new):
     path = tmp_path / "watch.toml"
-    path.write_text(EXAMPLE.read_text().replace(old, new))
+    path.write_text(config_text.replace(old, new))
     with pytest.raises(ConfigError):
         load_config(path)
 
@@ -59,10 +59,12 @@ class FakeProvider:
         return self.rows
 
 
-def test_shared_dates_apply_to_all_branches_and_only_selected_future_dates_are_queried(tmp_path):
+def test_shared_dates_apply_to_all_branches_and_only_selected_future_dates_are_queried(
+    tmp_path, config_text
+):
     path = tmp_path / "watch.toml"
     path.write_text(
-        EXAMPLE.read_text().replace(
+        config_text.replace(
             'dates = ["2026-10-28", "2026-10-31", "2026-11-04", "2026-11-07"]',
             'dates = ["2026-10-20", "2026-10-22", "2026-10-23", "2026-10-24", "2026-10-24"]',
         )
@@ -80,10 +82,10 @@ def test_shared_dates_apply_to_all_branches_and_only_selected_future_dates_are_q
     assert len(provider.calls) == len(expected)
 
 
-def test_individual_watch_can_override_shared_dates_and_weekdays(tmp_path):
+def test_individual_watch_can_override_shared_dates_and_weekdays(tmp_path, config_text):
     path = tmp_path / "watch.toml"
     path.write_text(
-        EXAMPLE.read_text().replace(
+        config_text.replace(
             'dates = ["2026-10-28", "2026-10-31", "2026-11-04", "2026-11-07"]',
             'dates = ["2026-10-24"]',
         )
@@ -171,10 +173,10 @@ def test_same_date_branches_are_queried_in_bounded_parallel(config):
     assert len(provider.calls) == len(config.watches)
 
 
-def test_unselected_date_in_saved_response_is_excluded(tmp_path, capsys):
+def test_unselected_date_in_saved_response_is_excluded(tmp_path, capsys, config_text):
     path = tmp_path / "watch.toml"
     path.write_text(
-        EXAMPLE.read_text().replace(
+        config_text.replace(
             'dates = ["2026-10-28", "2026-10-31", "2026-11-04", "2026-11-07"]',
             'dates = ["2026-10-23"]',
         )
@@ -263,7 +265,7 @@ def test_relay_outage_stops_remaining_branches_and_later_dates(config):
     ],
 )
 def test_offline_cli_replays_capture_without_network(
-    capsys, monkeypatch, tmp_path, fixture_name, branch_id, starts_at
+    capsys, monkeypatch, tmp_path, config_text, fixture_name, branch_id, starts_at
 ):
     monkeypatch.setattr(
         "movie_alert.main.current_time", lambda: datetime(2026, 10, 22, tzinfo=SEOUL)
@@ -271,7 +273,7 @@ def test_offline_cli_replays_capture_without_network(
     fixture = ROOT / "tests/fixtures" / fixture_name
     config_path = tmp_path / "watch.toml"
     config_path.write_text(
-        EXAMPLE.read_text().replace(
+        config_text.replace(
             'dates = ["2026-10-28", "2026-10-31", "2026-11-04", "2026-11-07"]',
             'dates = ["2026-10-24"]',
         )

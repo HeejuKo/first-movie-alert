@@ -134,6 +134,13 @@ def _rule(table: dict[str, Any]) -> WatchRule:
     )
 
 
+def _index(selection: dict[str, Any], key: str, size: int) -> int:
+    value = selection.get(key)
+    if type(value) is not int or not 0 <= value < size:
+        raise ConfigError(f"[selection].{key}: 0~{size - 1} 사이의 정수가 필요합니다.")
+    return value
+
+
 def load_config(path: Path) -> AppConfig:
     try:
         with path.open("rb") as file:
@@ -175,6 +182,15 @@ def load_config(path: Path) -> AppConfig:
     rules = tuple(_rule({**defaults, **rule}) for rule in watches)
     if len({rule.name for rule in rules}) != len(rules):
         raise ConfigError("각 watch의 name은 고유해야 합니다.")
+    if "selection" in raw:
+        selection = raw["selection"]
+        if not isinstance(selection, dict) or set(selection) != {"branch_index", "date_index"}:
+            raise ConfigError("[selection]에는 branch_index와 date_index를 모두 지정하세요.")
+        branch_index = _index(selection, "branch_index", len(watches))
+        selected = {**defaults, **watches[branch_index]}
+        # Index the written list before _rule sorts/deduplicates its dates.
+        date_index = _index(selection, "date_index", len(selected["dates"]))
+        rules = (_rule({**selected, "dates": [selected["dates"][date_index]]}),)
     source = cgv.get("source", "direct")
     if not isinstance(source, str) or source not in {"direct", "mcp_relay"}:
         raise ConfigError("[cgv].source는 direct 또는 mcp_relay여야 합니다.")

@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 import httpx
@@ -24,12 +25,17 @@ def payload():
 
 
 @pytest.fixture
-def config(tmp_path):
+def config_text():
+    # Legacy multi-watch tests exercise the configuration without optional selection.
+    text = (ROOT / "config/watch.example.toml").read_text()
+    return re.sub(r"(?ms)^\[selection\]\n.*?(?=^\[|\Z)", "", text)
+
+
+@pytest.fixture
+def config(tmp_path, config_text):
     path = tmp_path / "watch.toml"
     path.write_text(
-        (ROOT / "config/watch.example.toml")
-        .read_text()
-        .replace(
+        config_text.replace(
             'dates = ["2026-10-28", "2026-10-31", "2026-11-04", "2026-11-07"]',
             'dates = ["2026-10-24"]',
         )
