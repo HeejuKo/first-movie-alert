@@ -148,19 +148,15 @@ def _index(selection: dict[str, Any], key: str, size: int) -> int:
     return value
 
 
-def load_config(path: Path) -> AppConfig:
+def _read_toml(path: Path) -> dict[str, Any]:
     try:
         with path.open("rb") as file:
-            raw = tomllib.load(file)
+            return tomllib.load(file)
     except (OSError, tomllib.TOMLDecodeError):
         raise ConfigError("설정 파일을 읽을 수 없거나 TOML 형식이 잘못되었습니다.") from None
-    cgv = raw.get("cgv")
-    http = raw.get("http", {})
-    operations = raw.get("operations", {})
-    defaults = raw.get("watch_defaults", {})
-    watches = raw.get("watches")
-    if not isinstance(cgv, dict) or not isinstance(http, dict):
-        raise ConfigError("[cgv]와 [http] 설정은 TOML table이어야 합니다.")
+
+
+def _operations_settings(operations: object) -> OperationsSettings:
     if not isinstance(operations, dict) or set(operations) - {"enabled", "failure_threshold"}:
         raise ConfigError("[operations]에는 enabled와 failure_threshold만 지정할 수 있습니다.")
     operations_enabled = operations.get("enabled", False)
@@ -171,6 +167,12 @@ def load_config(path: Path) -> AppConfig:
         or not 2 <= threshold <= 30
     ):
         raise ConfigError("운영 알림은 enabled bool과 2~30 범위의 failure_threshold가 필요합니다.")
+    return OperationsSettings(operations_enabled, threshold)
+
+
+def _watch_tables(raw: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    defaults = raw.get("watch_defaults", {})
+    watches = raw.get("watches")
     if not isinstance(defaults, dict):
         raise ConfigError("[watch_defaults] 설정은 TOML table이어야 합니다.")
     if (
@@ -179,6 +181,10 @@ def load_config(path: Path) -> AppConfig:
         or not all(isinstance(rule, dict) for rule in watches)
     ):
         raise ConfigError("하나 이상의 [[watches]] 설정이 필요합니다.")
+    return defaults, watches
+
+
+def _http_settings(http: dict[str, Any]) -> HttpSettings:
     timeout = http.get("timeout_seconds", 10.0)
     retries = http.get("max_retries", 1)
     delay = http.get("retry_delay_seconds", 0.5)
@@ -197,6 +203,17 @@ def load_config(path: Path) -> AppConfig:
         raise ConfigError("max_retries: 0~2 사이의 정수가 필요합니다.")
     if type(parallel_requests) is not int or not 1 <= parallel_requests <= 6:
         raise ConfigError("max_parallel_requests: 1~6 사이의 정수가 필요합니다.")
+    return HttpSettings(
+        timeout_seconds=float(timeout),
+        max_retries=retries,
+        retry_delay_seconds=float(delay),
+        max_parallel_requests=parallel_requests,
+    )
+
+
+def _watch_rules(
+    raw: dict[str, Any], defaults: dict[str, Any], watches: list[dict[str, Any]]
+) -> tuple[WatchRule, ...]:
     rules = tuple(_rule({**defaults, **rule}) for rule in watches)
     if len({rule.name for rule in rules}) != len(rules):
         raise ConfigError("각 watch의 name은 고유해야 합니다.")
@@ -209,22 +226,34 @@ def load_config(path: Path) -> AppConfig:
         # Index the written list before _rule sorts/deduplicates its dates.
         date_index = _index(selection, "date_index", len(selected["dates"]))
         rules = (_rule({**selected, "dates": [selected["dates"][date_index]]}),)
+    return rules
+
+
+def _cgv_settings(cgv: dict[str, Any]) -> CgvSettings:
     source = cgv.get("source", "direct")
     if not isinstance(source, str) or source not in {"direct", "mcp_relay"}:
         raise ConfigError("[cgv].source는 direct 또는 mcp_relay여야 합니다.")
+    return CgvSettings(
+        _text(cgv, "co_cd"),
+        _text(cgv, "rtctl_scop_cd"),
+        source=source,
+        relay_base_url=_url(cgv, "relay_base_url", "https://mcp.aka.page"),
+    )
+
+
+def load_config(path: Path) -> AppConfig:
+    raw = _read_toml(path)
+    cgv = raw.get("cgv")
+    http = raw.get("http", {})
+    if not isinstance(cgv, dict) or not isinstance(http, dict):
+        raise ConfigError("[cgv]와 [http] 설정은 TOML table이어야 합니다.")
+    operations = _operations_settings(raw.get("operations", {}))
+    defaults, watches = _watch_tables(raw)
+    http_settings = _http_settings(http)
+    rules = _watch_rules(raw, defaults, watches)
     return AppConfig(
-        cgv=CgvSettings(
-            _text(cgv, "co_cd"),
-            _text(cgv, "rtctl_scop_cd"),
-            source=source,
-            relay_base_url=_url(cgv, "relay_base_url", "https://mcp.aka.page"),
-        ),
-        http=HttpSettings(
-            timeout_seconds=float(timeout),
-            max_retries=retries,
-            retry_delay_seconds=float(delay),
-            max_parallel_requests=parallel_requests,
-        ),
+        cgv=_cgv_settings(cgv),
+        http=http_settings,
         watches=rules,
-        operations=OperationsSettings(operations_enabled, threshold),
+        operations=operations,
     )

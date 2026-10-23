@@ -151,8 +151,6 @@ def test_http_rejection_has_no_secret_or_response_body(available_showtime, statu
         with pytest.raises(NotificationRejected) as error:
             DiscordNotifier(client, WEBHOOK).send(available_showtime)
     assert error.value.status_code == status_code
-    assert not error.value.retryable
-    assert not error.value.delivery_unknown
     assert "synthetic-secret-token" not in str(error.value)
     assert len(requests) == 1
 
@@ -179,8 +177,6 @@ def test_rate_limit_exposes_wait_without_retry(available_showtime, headers, body
         with pytest.raises(NotificationRateLimited) as error:
             DiscordNotifier(client, WEBHOOK).send(available_showtime)
     assert error.value.retry_after_seconds == expected
-    assert error.value.retryable
-    assert not error.value.delivery_unknown
     assert len(requests) == 1
 
 
@@ -195,8 +191,6 @@ def test_uncertain_http_failure_is_not_retried(available_showtime, status_code):
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(NotificationDeliveryUnknown) as error:
             DiscordNotifier(client, WEBHOOK).send(available_showtime)
-    assert error.value.delivery_unknown
-    assert not error.value.retryable
     assert "synthetic-secret-token" not in str(error.value)
     assert len(requests) == 1
 

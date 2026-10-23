@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from movie_alert.application import run_live
-from movie_alert.config import ConfigError, load_config
+from movie_alert.config import ConfigError, HttpSettings, OperationsSettings, load_config
 from movie_alert.main import main
 from movie_alert.models import SEOUL
 from movie_alert.providers.base import (
@@ -62,6 +62,19 @@ def test_invalid_config_fails_before_requests(tmp_path, config_text, old, new):
     path.write_text(config_text.replace(old, new))
     with pytest.raises(ConfigError):
         load_config(path)
+
+
+def test_optional_settings_preserve_defaults(tmp_path, config_text):
+    http_start = config_text.index("[http]")
+    http_end = config_text.index("[watch_defaults]")
+    text = (config_text[:http_start] + config_text[http_end:]).replace('source = "mcp_relay"\n', "")
+    path = tmp_path / "watch.toml"
+    path.write_text(text)
+    loaded = load_config(path)
+    assert loaded.http == HttpSettings()
+    assert loaded.operations == OperationsSettings()
+    assert loaded.cgv.source == "direct"
+    assert len(loaded.watches) == 6
 
 
 class FakeProvider:

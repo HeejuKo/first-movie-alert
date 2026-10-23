@@ -4,21 +4,15 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 from uuid import uuid4
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-from movie_alert.state import StateError
+from movie_alert.state import DynamoDBClient, StateError
 
 KEY_PATTERN = re.compile(r"showtime:v1:[0-9a-f]{64}")
 FIELDS = ("status", "owner", "lease_until", "attempt_count", "next_retry_at", "expires_at")
-
-
-class RecoveryClient(Protocol):
-    def get_item(self, **kwargs: Any) -> dict[str, Any]: ...
-
-    def update_item(self, **kwargs: Any) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -43,7 +37,7 @@ class NotificationSnapshot:
 
 
 class NotificationRecovery:
-    def __init__(self, client: RecoveryClient, table: str) -> None:
+    def __init__(self, client: DynamoDBClient, table: str) -> None:
         self.client = client
         self.table = table
 

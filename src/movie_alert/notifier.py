@@ -18,9 +18,6 @@ _WEBHOOK_IN_LOG = re.compile(
 class NotificationError(Exception):
     """A sanitized delivery failure; the caller owns state and retry decisions."""
 
-    retryable = False
-    delivery_unknown = False
-
 
 class NotificationRejected(NotificationError):
     """Invalid input or a definite rejection; do not retry unchanged input."""
@@ -33,13 +30,9 @@ class NotificationRejected(NotificationError):
 class NotificationConnectionError(NotificationError):
     """No connection was established; a bounded later retry is possible."""
 
-    retryable = True
-
 
 class NotificationRateLimited(NotificationError):
     """Discord rejected the request; wait at least retry_after_seconds if supplied."""
-
-    retryable = True
 
     def __init__(self, retry_after_seconds: float | None) -> None:
         super().__init__("Discord 요청 제한(HTTP 429). 재시도 대기 시간을 확인하세요.")
@@ -48,8 +41,6 @@ class NotificationRateLimited(NotificationError):
 
 class NotificationDeliveryUnknown(NotificationError):
     """A message may already exist; do not blindly repeat the POST."""
-
-    delivery_unknown = True
 
 
 @dataclass(frozen=True)

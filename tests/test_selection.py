@@ -62,6 +62,31 @@ def test_date_selection_respects_the_selected_branch_override(tmp_path, selectio
 
 
 @pytest.mark.parametrize(
+    ("old", "new", "message"),
+    [
+        (
+            'branch_id = "0056"',
+            "branch_id = 56",
+            "branch_id: 비어 있지 않은 문자열이 필요합니다. ID도 문자열로 적으세요.",
+        ),
+        (
+            'name = "치이카와-강남"',
+            'name = "치이카와-수유"',
+            "각 watch의 name은 고유해야 합니다.",
+        ),
+    ],
+)
+def test_selection_still_validates_unselected_candidates(
+    tmp_path, selection_text, old, new, message
+):
+    path = tmp_path / "watch.toml"
+    path.write_text(selection_text.replace(old, new))
+    with pytest.raises(ConfigError) as error:
+        load_config(path)
+    assert str(error.value) == message
+
+
+@pytest.mark.parametrize(
     "selection",
     [
         "[selection]",

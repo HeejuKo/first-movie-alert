@@ -17,6 +17,8 @@ CGV 직접 조회는 이 실행 환경에서 HTTP 403이므로, 현재 예시 �
 
 `providers/common.py`는 Provider의 문자열·날짜 검증과 GET 요청 설정을 공유한다. 응답 구조·상영 시각 형식·재시도·영화 미공개 교차 확인은 각 Provider가 처리한다. `outcomes.py`는 알림 결과 타입과 실패 판정을 관리하며 CLI 종료 코드·Lambda 실행 결과·운영 로그 집계에서 같은 상태값을 사용한다.
 
+`config.py`는 파일 읽기·섹션별 설정 검증·감시 대상 선택을 나눠 처리한다. 선택하지 않은 지점도 검증하며 날짜 인덱스는 작성 순서를 따른다. 알림 상태·운영 상태·단건 복구는 `state.py`의 `DynamoDBClient` 인터페이스를 공유하고, Discord 실패 처리는 예외 타입과 `retry_after_seconds`로 판단한다.
+
 ## 개발 환경
 
 Python 3.13과 [uv](https://docs.astral.sh/uv/getting-started/installation/)를 사용한다. 의존성은 `pyproject.toml`과 `uv.lock`으로 관리한다. 프로젝트의 `.venv`를 사용하며 기존 로컬 `venv/`와는 별도다.

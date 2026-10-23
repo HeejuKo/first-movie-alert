@@ -4,7 +4,6 @@ import json
 import re
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
-from typing import Any, Protocol
 from uuid import uuid4
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -12,15 +11,9 @@ from botocore.exceptions import BotoCoreError, ClientError
 from movie_alert.models import SEOUL
 from movie_alert.outcomes import AlertOutcome
 from movie_alert.pipeline import AlertDispatcher
-from movie_alert.state import StateError
+from movie_alert.state import DynamoDBClient, StateError
 
 HEALTH_KEY = "health:v1:checker"
-
-
-class HealthClient(Protocol):
-    def get_item(self, **kwargs: Any) -> dict[str, Any]: ...
-
-    def update_item(self, **kwargs: Any) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -89,7 +82,7 @@ def event_content(event: HealthEvent) -> str:
 
 
 class DynamoDBHealthStore:
-    def __init__(self, client: HealthClient, table: str) -> None:
+    def __init__(self, client: DynamoDBClient, table: str) -> None:
         self.client = client
         self.table = table
 
