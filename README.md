@@ -5,6 +5,8 @@
 
 CGV 직접 조회는 이 실행 환경에서 HTTP 403이므로, 현재 예시 설정은 공개 제3자 릴레이(`mcp.aka.page`)의 정규화된 시간표 API를 사용한다. 릴레이의 지속성·CGV 이용 허용 범위·장기 운영은 추가 검증이 필요하다. 예매 가능 상태의 의미가 미확인이라 `booking_status`는 `unknown`을 유지하지만 알림을 차단하지 않는다. DynamoDB·Lambda·Scheduler를 Terraform으로 배포했고 실제 Discord 전송·중복 차단과 Scheduler 자동 실행을 확인했다. 현재 스케줄은 활성 상태이며 컴퓨터가 꺼져 있어도 AWS에서 실행된다. 검증 범위·비용·운영 절차는 [인프라 안내](infra/README.md)를 따른다.
 
+운영 점검 명령, 확인된 릴레이의 IP별 하루 3,000회 한도, CI와 다음 단계는 [운영 확인 문서](docs/operations.md)에 정리했다. 현재 1분 조회는 한도를 넘을 수 있어 지점·날짜·주기 조합을 재검토 중이다.
+
 ## 개발 환경
 
 Python 3.13과 [uv](https://docs.astral.sh/uv/getting-started/installation/)를 사용한다. 의존성은 `pyproject.toml`과 `uv.lock`으로 관리한다. 프로젝트의 `.venv`를 사용하며 기존 로컬 `venv/`와는 별도다.
@@ -69,7 +71,7 @@ GET https://mcp.aka.page/api/cgv/timetable
 playDate=20261024&theaterCode=0056&movieCode=30001367&limit=50
 ```
 
-사용자 브라우저에서는 직접 CGV 요청이 HTTP 200이었지만, **2026-10-21과 2026-10-22 이 개발 환경에서 쿠키 없이 직접 요청한 결과는 HTTP 403이었다.** 릴레이는 2026-10-24 강남 및 등록한 6개 지점 조회에서 HTTP 200과 시간표를 반환했다. [릴레이 서비스 명세](https://github.com/hmmhmmhm/daiso-mcp/blob/main/docs/service-reference.md)상 CGV 시간표 응답은 3분 캐시이므로 30초마다 새 데이터가 보인다고 보장하지 않는다. 릴레이가 중단되거나 원천 접근이 바뀌면 자동 감시도 중단되며, AWS에서의 정상 조회·장기 운영은 아직 검증되지 않았다.
+사용자 브라우저에서는 직접 CGV 요청이 HTTP 200이었지만, **2026-10-21과 2026-10-22 이 개발 환경에서 쿠키 없이 직접 요청한 결과는 HTTP 403이었다.** 릴레이는 2026-10-24 강남 및 등록한 6개 지점 조회에서 HTTP 200과 시간표를 반환했다. [릴레이 서비스 명세](https://github.com/hmmhmmhm/daiso-mcp/blob/main/docs/service-reference.md)상 CGV 시간표 응답은 3분 캐시이므로 조회마다 새 데이터가 보인다고 보장하지 않는다. 릴레이가 중단되거나 원천 접근이 바뀌면 자동 감시도 중단된다. 2026-10-23 AWS의 단기 자동 조회는 확인했지만 장기 운영은 미검증이며, 같은 날 IP별 하루 3,000회 제한을 확인해 운영 구성을 재검토 중이다.
 
 허용된 조회 범위와 정상 접근 방법을 확인한 후 단발 실행한다.
 

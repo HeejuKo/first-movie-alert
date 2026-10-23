@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Python and Terraform
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      AWS_EC2_METADATA_DISABLED: "true"
+      TF_IN_AUTOMATION: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.13.4"
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --locked --group dev
+
+      - name: Lint and format
+        run: |
+          uv run --locked ruff check src tests scripts
+          uv run --locked ruff format --check src tests scripts
+
+      - name: Python tests
+        run: uv run --locked pytest -q
+
+      - name: Build Lambda package for Terraform mock tests
+        run: uv run --locked python scripts/build_lambda.py
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.17.0"
+          terraform_wrapper: false
+
+      - name: Terraform checks without AWS access
+        run: |
+          terraform -chdir=infra fmt -check -recursive
+          terraform -chdir=infra init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=infra validate -no-color
+          terraform -chdir=infra test -no-color
