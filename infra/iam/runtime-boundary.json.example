@@ -9,6 +9,16 @@
       "Resource": "arn:aws:dynamodb:ap-northeast-2:000000000000:table/movie-alert-state"
     },
     {
+      "Sid": "ReadCheckerHealth",
+      "Effect": "Allow",
+      "Action": ["dynamodb:GetItem"],
+      "Resource": "arn:aws:dynamodb:ap-northeast-2:000000000000:table/movie-alert-state",
+      "Condition": {
+        "ForAllValues:StringEquals": {"dynamodb:LeadingKeys": ["health:v1:checker"]},
+        "Null": {"dynamodb:LeadingKeys": "false"}
+      }
+    },
+    {
       "Effect": "Allow",
       "Action": [
         "logs:CreateLogStream",

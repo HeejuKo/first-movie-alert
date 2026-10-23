@@ -27,6 +27,38 @@ ENVIRONMENT = NotificationEnvironment(
 )
 
 
+@pytest.fixture(autouse=True)
+def clear_sdk_cache():
+    runtime._dynamodb_client.cache_clear()
+    yield
+    runtime._dynamodb_client.cache_clear()
+
+
+def test_polling_and_delivery_reuse_one_regional_sdk_client(monkeypatch):
+    session_factory = Mock(return_value=Mock(client=Mock(return_value=Mock())))
+    monkeypatch.setattr(runtime.boto3, "Session", session_factory)
+    monkeypatch.setenv("MOVIE_ALERT_DYNAMODB_TABLE", ENVIRONMENT.table_name)
+    monkeypatch.setenv("AWS_REGION", ENVIRONMENT.region)
+    for _ in range(5):
+        runtime.create_poll_lock()
+        with httpx.Client() as client:
+            create_dispatcher(ENVIRONMENT, client, 10, 30 * 86400)
+    session_factory.assert_called_once_with(region_name=ENVIRONMENT.region)
+    session_factory.return_value.client.assert_called_once()
+
+
+def test_health_sdk_is_reused_and_has_short_single_attempt_budget(monkeypatch):
+    factory = Mock(return_value=Mock(client=Mock(return_value=Mock())))
+    monkeypatch.setattr(runtime.boto3, "Session", factory)
+    with httpx.Client() as client:
+        for _ in range(3):
+            runtime.create_health_monitor(ENVIRONMENT, client, 3)
+    factory.assert_called_once()
+    options = factory.return_value.client.call_args.kwargs["config"]
+    assert options.connect_timeout == options.read_timeout == 2
+    assert options.retries["total_max_attempts"] == 1
+
+
 def test_webhook_is_not_in_environment_repr():
     assert "fake-test-token" not in repr(ENVIRONMENT)
 

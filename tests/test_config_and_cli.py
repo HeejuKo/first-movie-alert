@@ -21,6 +21,23 @@ EXAMPLE = ROOT / "config/watch.example.toml"
 
 
 @pytest.mark.parametrize(
+    "settings",
+    [
+        'enabled = "true"',
+        "failure_threshold = 1",
+        "failure_threshold = true",
+        "failure_threshold = 31",
+        "other = 3",
+    ],
+)
+def test_invalid_operations_configuration_is_rejected(tmp_path, config_text, settings):
+    path = tmp_path / "watch.toml"
+    path.write_text(config_text + "\n[operations]\n" + settings + "\n")
+    with pytest.raises(ConfigError):
+        load_config(path)
+
+
+@pytest.mark.parametrize(
     ("old", "new"),
     [
         ('branch_id = "0056"', "branch_id = 56"),

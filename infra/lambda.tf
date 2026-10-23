@@ -35,6 +35,7 @@ resource "aws_iam_role_policy" "lambda" {
     Version = "2012-10-17"
     Statement = [
       { Effect = "Allow", Action = ["dynamodb:UpdateItem"], Resource = aws_dynamodb_table.notifications.arn },
+      local.health_read_statement,
       { Effect = "Allow", Action = ["logs:CreateLogStream", "logs:PutLogEvents"], Resource = "${aws_cloudwatch_log_group.checker[0].arn}:*" }
     ]
   })

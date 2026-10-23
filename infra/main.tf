@@ -1,3 +1,16 @@
+locals {
+  health_read_statement = {
+    Sid      = "ReadCheckerHealth"
+    Effect   = "Allow"
+    Action   = ["dynamodb:GetItem"]
+    Resource = aws_dynamodb_table.notifications.arn
+    Condition = {
+      "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = ["health:v1:checker"] }
+      "Null"                      = { "dynamodb:LeadingKeys" = "false" }
+    }
+  }
+}
+
 resource "aws_dynamodb_table" "notifications" {
   name                        = var.table_name
   billing_mode                = "PROVISIONED"

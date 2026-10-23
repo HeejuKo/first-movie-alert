@@ -16,6 +16,31 @@ spec.loader.exec_module(operations)
 NOW = datetime(2026, 10, 23, 12, tzinfo=UTC)
 
 
+def test_operational_alerts_and_recovery_keys_are_reported_without_raw_logs():
+    key = "showtime:v1:" + "a" * 64
+    messages = [
+        "운영 알림 결과: key=operations:v1:example:failure status=sent",
+        f"회차 알림 확인 필요: key={key} status=uncertain message_id=123456",
+        "운영 상태 기록 실패: type=StateError",
+        "운영 상태 기록 생략: reason=remaining_time",
+        "ignored fake secret",
+    ]
+    client = Mock()
+    client.get_paginator.return_value.paginate.return_value = [
+        {
+            "events": [
+                {"timestamp": i * 1000, "message": message} for i, message in enumerate(messages)
+            ]
+        }
+    ]
+    result = operations.log_summary(client, NOW, NOW)
+    assert result["operational_notification_outcomes"] == {"sent": 1}
+    assert result["health_record_errors"] == result["health_record_skips"] == 1
+    assert result["notifications_needing_review"][0]["key"] == key
+    assert result["notifications_needing_review"][0]["message_id"] == "123456"
+    assert "secret" not in str(result)
+
+
 def test_log_pagination_counts_failures_and_billing_without_echoing_raw_data():
     report = (
         "REPORT RequestId: synthetic\tDuration: 1000.00 ms\tBilled Duration: 1100 ms"

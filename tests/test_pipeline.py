@@ -63,6 +63,34 @@ def test_started_session_is_skipped(available, dependencies):
     dependencies[1].send.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "error,expected",
+    [
+        (None, "sent"),
+        (NotificationDeliveryUnknown("lost"), "uncertain"),
+        (NotificationConnectionError("offline"), "deferred"),
+    ],
+)
+def test_operational_messages_use_existing_claim_and_failure_policy(dependencies, error, expected):
+    state, notifier = dependencies
+    notifier.send_text.return_value = DeliveryReceipt("123456")
+    notifier.send_text.side_effect = error
+    result = dispatcher(dependencies).dispatch_message(
+        "operations:v1:incident:failure", "운영 장애", active_until=END
+    )
+    assert result.status == expected
+    state.claim.assert_called_once()
+    state.ensure_owned.assert_called_once()
+    notifier.send.assert_not_called()
+    notifier.send_text.assert_called_once_with("운영 장애")
+
+
+def test_operational_send_cannot_use_a_showtime_state_key(dependencies):
+    with pytest.raises(ValueError):
+        dispatcher(dependencies).dispatch_message("showtime:v1:key", "운영 장애", active_until=END)
+    dependencies[0].claim.assert_not_called()
+
+
 def test_monitoring_end_is_exclusive(available, dependencies):
     result = dispatcher(dependencies).dispatch(available, active_until=NOW)
     assert result.status == "skipped"

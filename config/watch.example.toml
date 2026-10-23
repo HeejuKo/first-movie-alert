@@ -20,6 +20,11 @@ max_retries = 0
 retry_delay_seconds = 0.5
 max_parallel_requests = 3
 
+# Lambda 실제 알림 모드에서만 연속 실패와 정상 복귀를 알린다.
+[operations]
+enabled = true
+failure_threshold = 3
+
 # 날짜 후보 목록. selection.date_index로 이 중 한 날짜만 조회한다.
 # 지정한 날짜만 조회한다. weekdays를 생략하면 요일 제한을 두지 않는다.
 [watch_defaults]

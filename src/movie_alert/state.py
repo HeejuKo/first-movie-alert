@@ -33,6 +33,8 @@ class StateStore(Protocol):
 
 
 class DynamoDBClient(Protocol):
+    def get_item(self, **kwargs: Any) -> dict[str, Any]: ...
+
     def update_item(self, **kwargs: Any) -> dict[str, Any]: ...
 
 

@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 import boto3
 import httpx
@@ -9,6 +10,7 @@ from botocore.config import Config
 from botocore.exceptions import BotoCoreError
 
 from movie_alert.config import ConfigError
+from movie_alert.health import DynamoDBHealthStore, HealthMonitor
 from movie_alert.notifier import DiscordNotifier
 from movie_alert.pipeline import AlertDispatcher
 from movie_alert.state import DynamoDBClient, DynamoDBPollLock, DynamoDBStateStore
@@ -64,16 +66,34 @@ def create_poll_lock() -> DynamoDBPollLock:
     return DynamoDBPollLock(_dynamodb_client(region), table)
 
 
-def _dynamodb_client(region: str) -> DynamoDBClient:
+def create_health_monitor(
+    environment: NotificationEnvironment, client: httpx.Client, threshold: int
+) -> HealthMonitor:
+    # Health reporting must fit in the remaining invocation budget, without SDK retries.
+    dynamodb = _dynamodb_client(environment.region, timeout_seconds=2, max_attempts=1)
+    return HealthMonitor(
+        DynamoDBHealthStore(dynamodb, environment.table_name),
+        AlertDispatcher(
+            DynamoDBStateStore(dynamodb, environment.table_name),
+            DiscordNotifier(client, environment.webhook_url, 5),
+        ),
+        threshold,
+    )
+
+
+@lru_cache(maxsize=2)
+def _dynamodb_client(
+    region: str, *, timeout_seconds: float = 5, max_attempts: int = 2
+) -> DynamoDBClient:
     try:
         # Credential refresh creates its own regional Sign-In client from this session.
         session = boto3.Session(region_name=region)
         return session.client(
             "dynamodb",
             config=Config(
-                connect_timeout=5,
-                read_timeout=5,
-                retries={"mode": "standard", "total_max_attempts": 2},
+                connect_timeout=timeout_seconds,
+                read_timeout=timeout_seconds,
+                retries={"mode": "standard", "total_max_attempts": max_attempts},
             ),
         )
     except BotoCoreError:

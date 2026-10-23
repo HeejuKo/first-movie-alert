@@ -48,10 +48,17 @@ class WatchRule:
 
 
 @dataclass(frozen=True)
+class OperationsSettings:
+    enabled: bool = False
+    failure_threshold: int = 3
+
+
+@dataclass(frozen=True)
 class AppConfig:
     cgv: CgvSettings
     http: HttpSettings
     watches: tuple[WatchRule, ...]
+    operations: OperationsSettings = OperationsSettings()
 
 
 def _text(table: dict[str, Any], key: str) -> str:
@@ -149,10 +156,21 @@ def load_config(path: Path) -> AppConfig:
         raise ConfigError("설정 파일을 읽을 수 없거나 TOML 형식이 잘못되었습니다.") from None
     cgv = raw.get("cgv")
     http = raw.get("http", {})
+    operations = raw.get("operations", {})
     defaults = raw.get("watch_defaults", {})
     watches = raw.get("watches")
     if not isinstance(cgv, dict) or not isinstance(http, dict):
         raise ConfigError("[cgv]와 [http] 설정은 TOML table이어야 합니다.")
+    if not isinstance(operations, dict) or set(operations) - {"enabled", "failure_threshold"}:
+        raise ConfigError("[operations]에는 enabled와 failure_threshold만 지정할 수 있습니다.")
+    operations_enabled = operations.get("enabled", False)
+    threshold = operations.get("failure_threshold", 3)
+    if (
+        type(operations_enabled) is not bool
+        or type(threshold) is not int
+        or not 2 <= threshold <= 30
+    ):
+        raise ConfigError("운영 알림은 enabled bool과 2~30 범위의 failure_threshold가 필요합니다.")
     if not isinstance(defaults, dict):
         raise ConfigError("[watch_defaults] 설정은 TOML table이어야 합니다.")
     if (
@@ -208,4 +226,5 @@ def load_config(path: Path) -> AppConfig:
             max_parallel_requests=parallel_requests,
         ),
         watches=rules,
+        operations=OperationsSettings(operations_enabled, threshold),
     )

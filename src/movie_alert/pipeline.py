@@ -24,6 +24,8 @@ from movie_alert.state import StateError, StateStore
 class Notifier(Protocol):
     def send(self, showtime: Showtime) -> DeliveryReceipt: ...
 
+    def send_text(self, content: str) -> DeliveryReceipt: ...
+
 
 @dataclass(frozen=True)
 class AlertOutcome:
@@ -71,7 +73,12 @@ def notification_preview(showtime: Showtime, now: datetime) -> dict[str, object]
             f"알림 미전송: {reason}"
         )
     )
-    return {"eligible": reason is None, "reason": reason, "content": content}
+    return {
+        "key": showtime_key(showtime),
+        "eligible": reason is None,
+        "reason": reason,
+        "content": content,
+    }
 
 
 class AlertDispatcher:
@@ -105,6 +112,43 @@ class AlertDispatcher:
             return AlertOutcome(key, "skipped", reason)
         if now >= active_until:
             return AlertOutcome(key, "skipped", "감시 기간이 종료되었습니다.")
+        return self._dispatch(
+            key,
+            now=now,
+            send=lambda: self.notifier.send(showtime),
+            active_until=active_until,
+            valid_until=showtime.starts_at,
+            retain_until=showtime.ends_at,
+        )
+
+    def dispatch_message(self, key: str, content: str, *, active_until: datetime) -> AlertOutcome:
+        """Use the same claims and ambiguous-delivery policy for operational alerts."""
+        if not key.startswith("operations:v1:"):
+            raise ValueError("운영 알림에는 별도의 상태 키가 필요합니다.")
+        now = self.clock()
+        if active_until.utcoffset() is None:
+            raise ValueError("감시 종료 시각에는 시간대가 필요합니다.")
+        if now >= active_until:
+            return AlertOutcome(key, "skipped", "감시 기간이 종료되었습니다.")
+        return self._dispatch(
+            key,
+            now=now,
+            send=lambda: self.notifier.send_text(content),
+            active_until=active_until,
+            valid_until=active_until,
+            retain_until=active_until,
+        )
+
+    def _dispatch(
+        self,
+        key: str,
+        *,
+        now: datetime,
+        send: Callable[[], DeliveryReceipt],
+        active_until: datetime,
+        valid_until: datetime,
+        retain_until: datetime,
+    ) -> AlertOutcome:
         owner = uuid4().hex
         claim_epoch = int(now.timestamp())
         lease_until_epoch = claim_epoch + self.lease_seconds
@@ -119,11 +163,11 @@ class AlertDispatcher:
         now = self.clock()
         retention = max(
             self.retention_seconds,
-            math.ceil(max(active_until.timestamp(), showtime.ends_at.timestamp()) - now.timestamp())
+            math.ceil(max(active_until.timestamp(), retain_until.timestamp()) - now.timestamp())
             + 7 * 24 * 60 * 60,
         )
         try:
-            if now >= active_until or showtime.starts_at <= now:
+            if now >= active_until or valid_until <= now:
                 self.state.mark_failed(key, owner, int(now.timestamp()), retention)
                 return AlertOutcome(
                     key, "skipped", "전송 전에 감시 기간 또는 상영 시작이 지났습니다."
@@ -132,7 +176,7 @@ class AlertDispatcher:
             now = self.clock()
             if now.timestamp() >= lease_until_epoch:
                 return AlertOutcome(key, "state_error", "처리 기한이 만료되어 전송하지 않았습니다.")
-            if now >= active_until or showtime.starts_at <= now:
+            if now >= active_until or valid_until <= now:
                 self.state.mark_failed(key, owner, int(now.timestamp()), retention)
                 return AlertOutcome(key, "skipped", "소유권 확인 중 알림 유효 기간이 끝났습니다.")
         except StateError:
@@ -140,7 +184,7 @@ class AlertDispatcher:
                 key, "state_error", "처리 소유권을 확인하지 못해 전송하지 않았습니다."
             )
         try:
-            receipt = self.notifier.send(showtime)
+            receipt = send()
         except (NotificationConnectionError, NotificationRateLimited) as error:
             now = self.clock()
             required_delay = self.retry_delay_seconds
@@ -149,7 +193,7 @@ class AlertDispatcher:
             retry_epoch = math.ceil(now.timestamp() + required_delay)
             delay = retry_epoch - int(now.timestamp())
             try:
-                deadline = min(active_until.timestamp(), showtime.starts_at.timestamp())
+                deadline = min(active_until.timestamp(), valid_until.timestamp())
                 if retry_epoch >= deadline:
                     self.state.mark_failed(key, owner, int(now.timestamp()), retention)
                     return AlertOutcome(

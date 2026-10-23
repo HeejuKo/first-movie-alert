@@ -57,7 +57,7 @@ run "notification_state_contract" {
 
   assert {
     condition     = jsondecode(output.runtime_dynamodb_policy_json).Statement[0].Action == ["dynamodb:UpdateItem"] && jsondecode(output.runtime_dynamodb_policy_json).Statement[0].Resource == aws_dynamodb_table.notifications.arn
-    error_message = "App permissions must allow only UpdateItem on the notification table."
+    error_message = "Notification writes must stay scoped to the notification table."
   }
 }
 
@@ -98,6 +98,10 @@ run "scheduled_checker_contract" {
   assert {
     condition     = aws_iam_role.lambda[0].permissions_boundary == local.boundary_arn && aws_iam_role.scheduler[0].permissions_boundary == local.boundary_arn
     error_message = "Both execution roles must stay within the pre-created runtime boundary."
+  }
+  assert {
+    condition     = jsondecode(aws_iam_role_policy.lambda[0].policy).Statement[1].Action == ["dynamodb:GetItem"] && jsondecode(aws_iam_role_policy.lambda[0].policy).Statement[1].Condition["ForAllValues:StringEquals"]["dynamodb:LeadingKeys"] == ["health:v1:checker"] && jsondecode(aws_iam_role_policy.lambda[0].policy).Statement[1].Condition.Null["dynamodb:LeadingKeys"] == "false"
+    error_message = "Runtime reads must be restricted to the health key and require LeadingKeys."
   }
   assert {
     condition     = aws_lambda_function_event_invoke_config.checker[0].maximum_retry_attempts == 0 && one(aws_scheduler_schedule.checker[0].target).retry_policy[0].maximum_retry_attempts == 0

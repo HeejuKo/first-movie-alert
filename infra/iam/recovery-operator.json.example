@@ -1,0 +1,15 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "InspectAndRecoverSingleShowtime",
+      "Effect": "Allow",
+      "Action": ["dynamodb:GetItem", "dynamodb:UpdateItem"],
+      "Resource": "arn:aws:dynamodb:ap-northeast-2:000000000000:table/movie-alert-state",
+      "Condition": {
+        "ForAllValues:StringLike": {"dynamodb:LeadingKeys": ["showtime:v1:*"]},
+        "Null": {"dynamodb:LeadingKeys": "false"}
+      }
+    }
+  ]
+}

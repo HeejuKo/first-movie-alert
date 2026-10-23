@@ -8,6 +8,7 @@ import pytest
 from movie_alert import lambda_handler as entry
 from movie_alert.main import deliver_notifications, run_live
 from movie_alert.models import SEOUL
+from movie_alert.pipeline import AlertOutcome
 
 NOW = datetime(2026, 10, 23, 12, tzinfo=SEOUL)
 
@@ -57,6 +58,38 @@ def test_default_checks_once_without_waiting(context, clock, runtime):
     assert len(result["checks"]) == 1
     runtime[0].assert_called_once()
     assert clock[0] == 0
+
+
+@pytest.mark.parametrize("fails", [True, False])
+def test_real_notification_round_records_health_without_changing_query_result(
+    context, runtime, config, monkeypatch, fails
+):
+    from movie_alert.config import OperationsSettings
+
+    monkeypatch.setattr(
+        entry,
+        "load_config",
+        lambda path: replace(
+            config, operations=OperationsSettings(enabled=True, failure_threshold=3)
+        ),
+    )
+    monitor = Mock()
+    monitor.record.return_value = None
+    monkeypatch.setattr(entry, "create_health_monitor", Mock(return_value=monitor))
+    if fails:
+        runtime[0].return_value = ([], ["network timeout"])
+        with pytest.raises(RuntimeError):
+            entry.handler({"notify": True}, context)
+    else:
+        assert entry.handler({"notify": True}, context)["status"] == "ok"
+    assert monitor.record.call_args.kwargs["success"] is not fails
+
+
+def test_disabled_operational_alerts_do_not_create_monitor(context, runtime, monkeypatch):
+    monitor = Mock()
+    monkeypatch.setattr(entry, "create_health_monitor", monitor)
+    entry.handler({"notify": True}, context)
+    monitor.assert_not_called()
 
 
 def test_two_checks_start_thirty_seconds_apart(context, clock, runtime):
@@ -140,10 +173,12 @@ def test_provider_failure_is_lambda_failure_without_delivery(context, runtime):
 
 
 @pytest.mark.parametrize("status", ["deferred", "uncertain", "failed", "state_error"])
-def test_delivery_failure_is_not_reported_as_success(context, runtime, status):
-    runtime[1].return_value = [SimpleNamespace(status=status)]
+def test_delivery_failure_is_not_reported_as_success(context, runtime, status, caplog):
+    key = "showtime:v1:" + "a" * 64
+    runtime[1].return_value = [AlertOutcome(key, status, "synthetic failure")]
     with pytest.raises(RuntimeError):
         entry.handler({"notify": True}, context)
+    assert key in caplog.text
 
 
 def test_unexpected_errors_do_not_expose_secrets(context, runtime, caplog):

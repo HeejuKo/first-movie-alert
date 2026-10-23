@@ -160,8 +160,13 @@ class DiscordNotifier:
         _protect_httpx_logs()
 
     def send(self, showtime: Showtime) -> DeliveryReceipt:
+        return self.send_text(notification_content(showtime))
+
+    def send_text(self, content: str) -> DeliveryReceipt:
+        if not isinstance(content, str) or not content.strip() or len(content) > 2000:
+            raise NotificationRejected("Discord 메시지는 1~2,000자여야 합니다.")
         payload = {
-            "content": notification_content(showtime),
+            "content": content,
             "allowed_mentions": {"parse": []},
         }
         try:

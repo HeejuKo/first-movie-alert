@@ -14,7 +14,12 @@ from movie_alert.config import AppConfig, ConfigError, load_config
 from movie_alert.main import create_provider, deliver_notifications, run_live
 from movie_alert.notifier import NotificationError
 from movie_alert.pipeline import current_time
-from movie_alert.runtime import NotificationEnvironment, create_poll_lock, notification_environment
+from movie_alert.runtime import (
+    NotificationEnvironment,
+    create_health_monitor,
+    create_poll_lock,
+    notification_environment,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +89,41 @@ def _handle(event: dict[str, Any], context: LambdaContext, started: float) -> di
         logger.info("중첩 호출 생략: request_id=%s", owner)
         return {"status": "skipped", "reason": "already_running", "checks": []}
     try:
-        return _run_checks(config, context, started, notify, checks, environment)
+        try:
+            result = _run_checks(config, context, started, notify, checks, environment)
+        except Exception:
+            try:
+                _report_health(config, context, environment, success=False)
+            except Exception as error:
+                logger.error("운영 상태 기록 실패: type=%s", type(error).__name__)
+            raise
+        _report_health(config, context, environment, success=True)
+        return result
     finally:
         lock.release(owner)
+
+
+def _report_health(
+    config: AppConfig,
+    context: LambdaContext,
+    environment: NotificationEnvironment | None,
+    *,
+    success: bool,
+) -> None:
+    if environment is None or not config.operations.enabled:
+        return
+    if context.get_remaining_time_in_millis() < 80000:
+        logger.warning("운영 상태 기록 생략: reason=remaining_time")
+        return
+    with httpx.Client() as client:
+        monitor = create_health_monitor(environment, client, config.operations.failure_threshold)
+        outcome = monitor.record(
+            success=success,
+            now=current_time(),
+            active_until=max(rule.active_until for rule in config.watches if rule.enabled),
+        )
+    if outcome is not None:
+        logger.info("운영 알림 결과: key=%s status=%s", outcome.key, outcome.status)
 
 
 def _run_checks(
@@ -140,6 +177,13 @@ def _run_checks(
         counts: dict[str, int] = {}
         for outcome in outcomes:
             counts[outcome.status] = counts.get(outcome.status, 0) + 1
+            if outcome.status in {"deferred", "uncertain", "failed", "state_error"}:
+                logger.warning(
+                    "회차 알림 확인 필요: key=%s status=%s message_id=%s",
+                    outcome.key,
+                    outcome.status,
+                    outcome.message_id,
+                )
         summary = {
             "check": index + 1,
             "detected": len(selected),

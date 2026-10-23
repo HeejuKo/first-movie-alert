@@ -26,9 +26,12 @@ def log_summary(client: Any, start: datetime, end: datetime) -> dict[str, Any]:
     durations = []
     memory = []
     outcomes: Counter[str] = Counter()
+    operational_outcomes: Counter[str] = Counter()
+    needs_review: dict[str, dict[str, Any]] = {}
     failures: Counter[str] = Counter()
     report_statuses: Counter[str] = Counter()
     reports = checks = query_errors = malformed = events = 0
+    health_errors = health_skips = 0
     billed_gb_seconds = Decimal(0)
     first = last = last_check = None
     for page in client.get_paginator("filter_log_events").paginate(
@@ -42,6 +45,35 @@ def log_summary(client: Any, start: datetime, end: datetime) -> dict[str, Any]:
             first = first or timestamp
             last = timestamp
             message = event["message"]
+            if "운영 상태 기록 실패:" in message:
+                health_errors += 1
+            if "운영 상태 기록 생략:" in message:
+                health_skips += 1
+            if "운영 알림 결과:" in message:
+                outcome = re.search(
+                    r" status=(sent|uncertain|failed|deferred|state_error|not_claimed|skipped)\b",
+                    message,
+                )
+                if outcome:
+                    operational_outcomes[outcome[1]] += 1
+                else:
+                    malformed += 1
+            if "회차 알림 확인 필요:" in message:
+                issue = re.search(
+                    r"key=(showtime:v1:[0-9a-f]{64}) "
+                    r"status=(deferred|uncertain|failed|state_error) "
+                    r"message_id=(None|[0-9]+)\b",
+                    message,
+                )
+                if issue:
+                    needs_review[issue[1]] = {
+                        "key": issue[1],
+                        "status_in_log": issue[2],
+                        "last_seen_at": timestamp,
+                        "message_id": None if issue[3] == "None" else issue[3],
+                    }
+                else:
+                    malformed += 1
             if message.startswith("REPORT RequestId:"):
                 reports += 1
                 duration = re.search(r"\tDuration: ([\d.]+) ms", message)
@@ -82,6 +114,10 @@ def log_summary(client: Any, start: datetime, end: datetime) -> dict[str, Any]:
         "handler_failures_by_type": dict(failures),
         "report_statuses": dict(report_statuses),
         "notification_outcomes": dict(outcomes),
+        "operational_notification_outcomes": dict(operational_outcomes),
+        "health_record_errors": health_errors,
+        "health_record_skips": health_skips,
+        "notifications_needing_review": list(needs_review.values()),
         "duration_average_ms": round(mean(durations), 3) if durations else None,
         "duration_max_ms": max(durations, default=None),
         "max_memory_used_mb": max(memory, default=None),

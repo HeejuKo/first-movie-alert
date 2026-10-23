@@ -22,7 +22,7 @@ output "runtime_dynamodb_policy_json" {
       Effect   = "Allow"
       Action   = ["dynamodb:UpdateItem"]
       Resource = aws_dynamodb_table.notifications.arn
-    }]
+    }, local.health_read_statement]
   })
 }
 
