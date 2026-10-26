@@ -2,7 +2,7 @@
 # branch_index: 0=강남, 1=강변, 2=성신여대입구, 3=수유, 4=연남, 5=홍대
 # date_index: 아래 watch_defaults.dates 목록 순서 (0=10/28, 1=10/31, ...)
 [selection]
-branch_index = 3
+branch_index = 2
 date_index = 1
 
 # 브라우저에서 확인한 요청의 값. 코드 의미와 다른 값의 지원 범위는 미확인.
