@@ -29,6 +29,9 @@ EXAMPLE = ROOT / "config/watch.example.toml"
         "failure_threshold = true",
         "failure_threshold = 31",
         "other = 3",
+        "recovery_threshold = 0",
+        "recovery_threshold = 31",
+        "recovery_threshold = true",
     ],
 )
 def test_invalid_operations_configuration_is_rejected(tmp_path, config_text, settings):

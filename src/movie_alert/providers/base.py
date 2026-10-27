@@ -5,7 +5,9 @@ from movie_alert.models import Showtime
 
 
 class ProviderError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, retry_after_seconds: int = 0) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
 
 
 class ResponseValidationError(ProviderError):

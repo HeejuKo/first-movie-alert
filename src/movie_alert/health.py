@@ -22,6 +22,7 @@ class HealthEvent:
     kind: str
     since: int
     failures: int
+    successes: int = 0
 
     @property
     def key(self) -> str:
@@ -36,16 +37,27 @@ class HealthSnapshot:
     since: int = 0
     announced: bool = False
     pending: HealthEvent | None = None
+    successes: int = 0
 
 
 def advance(
-    state: HealthSnapshot, *, success: bool, now_epoch: int, threshold: int
+    state: HealthSnapshot,
+    *,
+    success: bool,
+    now_epoch: int,
+    threshold: int,
+    recovery_threshold: int = 5,
 ) -> HealthSnapshot:
     if success:
         event = state.pending
         if state.failures >= threshold:
-            event = HealthEvent(state.incident_id, "recovery", state.since, state.failures)
-        return replace(state, failures=0, announced=False, pending=event)
+            successes = state.successes + 1
+            if successes < recovery_threshold:
+                return replace(state, successes=successes)
+            event = HealthEvent(
+                state.incident_id, "recovery", state.since, state.failures, successes
+            )
+        return replace(state, failures=0, successes=0, announced=False, pending=event)
     failures = state.failures + 1
     incident = state.incident_id if state.failures else uuid4().hex
     since = state.since if state.failures else now_epoch
@@ -61,6 +73,7 @@ def advance(
         since=since,
         announced=announced,
         pending=pending,
+        successes=0,
     )
 
 
@@ -75,8 +88,9 @@ def event_content(event: HealthEvent) -> str:
         )
     return (
         "Movie Alert 운영 복구\n"
-        f"연속 실패 {event.failures}회 이후 조회·알림 처리가 정상 완료됐습니다.\n"
-        f"장애 시작: {since:%Y-%m-%d %H:%M:%S} KST\n"
+        f"처리 실패 {event.failures}회 이후 조회·알림 처리가 정상 완료됐습니다.\n"
+        + (f"연속 정상 확인: {event.successes}회\n" if event.successes else "")
+        + f"장애 시작: {since:%Y-%m-%d %H:%M:%S} KST\n"
         "새 회차 발견 또는 미전송 알림의 복구 완료를 뜻하지는 않습니다."
     )
 
@@ -95,14 +109,25 @@ class DynamoDBHealthStore:
                 return HealthSnapshot()
             values = json.loads(item["payload"]["S"])
             event = values.pop("pending")
+            progress = item.get("recovery_progress", {}).get("M", {})
+            successes = event_successes = 0
+            # Older code ignores this attribute; its writes invalidate stale counters.
+            if progress and progress["revision"] == item["revision"]:
+                successes = int(progress["successes"]["N"])
+                event_successes = int(progress["event_successes"]["N"])
+            values["successes"] = successes
             state = HealthSnapshot(
                 revision=int(item["revision"]["N"]),
-                pending=HealthEvent(**event) if event is not None else None,
+                pending=HealthEvent(**{**event, "successes": event_successes})
+                if event is not None
+                else None,
                 **values,
             )
             if (
                 type(state.failures) is not int
                 or state.failures < 0
+                or type(state.successes) is not int
+                or state.successes < 0
                 or state.revision < 1
                 or type(state.announced) is not bool
                 or type(state.since) is not int
@@ -119,6 +144,8 @@ class DynamoDBHealthStore:
                         or not re.fullmatch(r"[0-9a-f]{32}", state.pending.incident_id)
                         or state.pending.failures < 1
                         or state.pending.since < 0
+                        or type(state.pending.successes) is not int
+                        or state.pending.successes < 0
                     )
                 )
             ):
@@ -130,11 +157,16 @@ class DynamoDBHealthStore:
     def save(self, state: HealthSnapshot, now_epoch: int) -> HealthSnapshot:
         data = asdict(state)
         data.pop("revision")
+        successes = data.pop("successes")
+        event_successes = data["pending"].pop("successes") if data["pending"] else 0
         try:
             self.client.update_item(
                 TableName=self.table,
                 Key={"id": {"S": HEALTH_KEY}},
-                UpdateExpression="SET #payload = :payload, #revision = :next, #expires = :expires",
+                UpdateExpression=(
+                    "SET #payload = :payload, #revision = :next, #expires = :expires, "
+                    "#progress = :progress"
+                ),
                 ConditionExpression=(
                     "attribute_not_exists(#id)" if state.revision == 0 else "#revision = :previous"
                 ),
@@ -142,12 +174,20 @@ class DynamoDBHealthStore:
                     "#payload": "payload",
                     "#revision": "revision",
                     "#expires": "expires_at",
+                    "#progress": "recovery_progress",
                     **({"#id": "id"} if state.revision == 0 else {}),
                 },
                 ExpressionAttributeValues={
                     ":payload": {"S": json.dumps(data, separators=(",", ":"))},
                     ":next": {"N": str(state.revision + 1)},
                     ":expires": {"N": str(now_epoch + 30 * 86400)},
+                    ":progress": {
+                        "M": {
+                            "revision": {"N": str(state.revision + 1)},
+                            "successes": {"N": str(successes)},
+                            "event_successes": {"N": str(event_successes)},
+                        }
+                    },
                     **({":previous": {"N": str(state.revision)}} if state.revision else {}),
                 },
             )
@@ -158,11 +198,16 @@ class DynamoDBHealthStore:
 
 class HealthMonitor:
     def __init__(
-        self, store: DynamoDBHealthStore, dispatcher: AlertDispatcher, threshold: int
+        self,
+        store: DynamoDBHealthStore,
+        dispatcher: AlertDispatcher,
+        threshold: int,
+        recovery_threshold: int = 5,
     ) -> None:
         self.store = store
         self.dispatcher = dispatcher
         self.threshold = threshold
+        self.recovery_threshold = recovery_threshold
 
     def record(
         self, *, success: bool, now: datetime, active_until: datetime
@@ -172,6 +217,7 @@ class HealthMonitor:
             success=success,
             now_epoch=int(now.timestamp()),
             threshold=self.threshold,
+            recovery_threshold=self.recovery_threshold,
         )
         state = self.store.save(state, int(now.timestamp()))
         if state.pending is None:

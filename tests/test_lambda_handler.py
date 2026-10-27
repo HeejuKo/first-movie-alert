@@ -7,8 +7,10 @@ import pytest
 
 from movie_alert import lambda_handler as entry
 from movie_alert.application import deliver_notifications, run_live
+from movie_alert.config import HttpSettings
 from movie_alert.models import SEOUL
 from movie_alert.outcomes import AlertOutcome
+from movie_alert.providers.base import ProviderUnavailableError
 
 NOW = datetime(2026, 10, 23, 12, tzinfo=SEOUL)
 
@@ -58,6 +60,54 @@ def test_default_checks_once_without_waiting(context, clock, runtime):
     assert len(result["checks"]) == 1
     runtime[0].assert_called_once()
     assert clock[0] == 0
+
+
+def test_relay_retry_configuration_still_fits_the_lambda_budget(
+    context, runtime, config, monkeypatch
+):
+    configured = replace(config, http=HttpSettings(timeout_seconds=20, max_retries=1))
+    monkeypatch.setattr(entry, "load_config", lambda path: configured)
+    assert entry.handler({}, context)["status"] == "ok"
+    runtime[0].assert_called_once()
+
+
+def test_server_backoff_is_preserved_after_a_failed_check(context, runtime, polling_lock):
+    def query(*args, **kwargs):
+        kwargs["on_provider_error"](ProviderUnavailableError("safe error", retry_after_seconds=180))
+        return [], ["safe error"]
+
+    runtime[0].side_effect = query
+    with pytest.raises(RuntimeError):
+        entry.handler({}, context)
+    polling_lock.release.assert_called_once_with(
+        "test-request", not_before_epoch=int(NOW.timestamp()) + 180
+    )
+
+
+def test_server_backoff_cannot_extend_past_watch_end(
+    context, runtime, config, monkeypatch, polling_lock
+):
+    end = NOW + timedelta(seconds=120)
+    monkeypatch.setattr(
+        entry,
+        "load_config",
+        lambda path: replace(
+            config, watches=tuple(replace(rule, active_until=end) for rule in config.watches)
+        ),
+    )
+
+    def query(*args, **kwargs):
+        kwargs["on_provider_error"](
+            ProviderUnavailableError("safe error", retry_after_seconds=9999)
+        )
+        return [], ["safe error"]
+
+    runtime[0].side_effect = query
+    with pytest.raises(RuntimeError):
+        entry.handler({}, context)
+    polling_lock.release.assert_called_once_with(
+        "test-request", not_before_epoch=int(end.timestamp())
+    )
 
 
 @pytest.mark.parametrize("fails", [True, False])

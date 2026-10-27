@@ -1,6 +1,7 @@
 """CGV 시간표를 공개 제3자 릴레이의 정규화된 응답에서 읽는 Provider."""
 
 import logging
+import re
 import socket
 import ssl
 import time
@@ -26,6 +27,7 @@ from movie_alert.providers.common import (
     get_response,
     parse_business_date,
     required_text,
+    retry_after_seconds,
 )
 
 TIMETABLE_PATH = "/api/cgv/timetable"
@@ -33,6 +35,27 @@ MOVIES_PATH = "/api/cgv/movies"
 _text = partial(required_text, source="CGV 릴레이")
 _business_date = partial(parse_business_date, field="CGV 릴레이 playDate")
 logger = logging.getLogger(__name__)
+
+
+def relay_request_limit(max_retries: int) -> int:
+    """Count movie-list fallback and timetable retries in the same request budget."""
+    return max(2, max_retries + 1)
+
+
+def _unavailable(response: httpx.Response, operation: str) -> ProviderUnavailableError:
+    code = ""
+    try:
+        payload = response.json()
+        error = payload.get("error") if isinstance(payload, dict) else None
+        value = error.get("code") if isinstance(error, dict) else None
+        if isinstance(value, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", value):
+            code = f" code={value}"
+    except ValueError:
+        pass
+    return ProviderUnavailableError(
+        f"CGV 릴레이 {operation} 조회에 실패했습니다(HTTP {response.status_code}).{code}",
+        retry_after_seconds=retry_after_seconds(response),
+    )
 
 
 def _network_error(
@@ -171,11 +194,12 @@ class CgvRelayProvider:
         if response.status_code in (401, 403):
             raise AccessDeniedError(f"CGV 릴레이 접근 제한(HTTP {response.status_code})입니다.")
         if response.status_code == 429:
-            raise RateLimitError("CGV 릴레이 요청 제한(HTTP 429)입니다.")
-        if 500 <= response.status_code < 600:
-            raise ProviderUnavailableError(
-                f"CGV 릴레이 영화 목록 조회에 실패했습니다(HTTP {response.status_code})."
+            raise RateLimitError(
+                "CGV 릴레이 요청 제한(HTTP 429)입니다.",
+                retry_after_seconds=retry_after_seconds(response),
             )
+        if 500 <= response.status_code < 600:
+            raise _unavailable(response, "영화 목록")
         if response.status_code != 200:
             raise ProviderError(
                 f"CGV 릴레이 영화 목록 조회에 실패했습니다(HTTP {response.status_code})."
@@ -219,7 +243,9 @@ class CgvRelayProvider:
             "movieCode": movie_id,
             "limit": "50",
         }
+        remaining_requests = relay_request_limit(self.http.max_retries)
         for attempt in range(self.http.max_retries + 1):
+            remaining_requests -= 1
             started = time.monotonic()
             try:
                 response = get_response(
@@ -230,7 +256,7 @@ class CgvRelayProvider:
                 )
             except httpx.RequestError as error:
                 elapsed = time.monotonic() - started
-                if isinstance(error, httpx.ReadTimeout):
+                if isinstance(error, httpx.ReadTimeout) and remaining_requests:
                     logger.warning(
                         "CGV 릴레이 시간표 응답 대기 시간 초과 [ReadTimeout, %.2f초]: "
                         "지점=%s · %s; 영화 목록 확인",
@@ -238,32 +264,40 @@ class CgvRelayProvider:
                         branch_id,
                         show_date,
                     )
+                    remaining_requests -= 1
                     if not self._movie_is_listed(movie_id, branch_id, show_date):
                         return []
-                if attempt == self.http.max_retries:
+                if attempt == self.http.max_retries or not remaining_requests:
                     raise _network_error("시간표 /api/cgv/timetable", error, elapsed) from None
                 self.sleep(self.http.retry_delay_seconds * 2**attempt)
                 continue
             if response.status_code in (401, 403):
                 raise AccessDeniedError(f"CGV 릴레이 접근 제한(HTTP {response.status_code})입니다.")
             if response.status_code == 429:
-                raise RateLimitError("CGV 릴레이 요청 제한(HTTP 429)입니다.")
+                raise RateLimitError(
+                    "CGV 릴레이 요청 제한(HTTP 429)입니다.",
+                    retry_after_seconds=retry_after_seconds(response),
+                )
+            if 500 <= response.status_code < 600 and retry_after_seconds(response):
+                raise _unavailable(response, "시간표")
             if response.status_code == 502:
-                if not self._movie_is_listed(movie_id, branch_id, show_date):
-                    return []
-                if attempt < self.http.max_retries:
+                if remaining_requests:
+                    remaining_requests -= 1
+                    if not self._movie_is_listed(movie_id, branch_id, show_date):
+                        return []
+                if attempt < self.http.max_retries and remaining_requests:
                     self.sleep(self.http.retry_delay_seconds * 2**attempt)
                     continue
-                raise ProviderUnavailableError(
-                    "CGV 릴레이가 시간표를 반환하지 못했습니다(HTTP 502)."
-                )
-            if response.status_code in RETRYABLE_STATUSES and attempt < self.http.max_retries:
+                raise _unavailable(response, "시간표")
+            if (
+                response.status_code in RETRYABLE_STATUSES
+                and attempt < self.http.max_retries
+                and remaining_requests
+            ):
                 self.sleep(self.http.retry_delay_seconds * 2**attempt)
                 continue
             if 500 <= response.status_code < 600:
-                raise ProviderUnavailableError(
-                    f"CGV 릴레이 시간표 조회에 실패했습니다(HTTP {response.status_code})."
-                )
+                raise _unavailable(response, "시간표")
             if response.status_code != 200:
                 raise ProviderError(
                     f"CGV 릴레이 시간표 조회에 실패했습니다(HTTP {response.status_code})."

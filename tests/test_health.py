@@ -40,7 +40,7 @@ def test_only_threshold_failures_notify_once_then_recovery_once():
     dispatcher = Mock()
     dispatcher.dispatch_message.side_effect = lambda key, *a, **k: AlertOutcome(key, "sent", "ok")
     monitor = HealthMonitor(store, dispatcher, 3)
-    for success in [False, False, False, False, False, True, True]:
+    for success in [False, False, False, False, False, True, True, True, True, True, True]:
         monitor.record(success=success, now=NOW, active_until=NOW + timedelta(days=1))
     calls = dispatcher.dispatch_message.call_args_list
     assert len(calls) == 2
@@ -58,18 +58,69 @@ def test_a_success_breaks_the_failure_streak_and_new_incident_gets_a_new_key():
     for success in [False, False, True, False, False]:
         monitor.record(success=success, now=NOW, active_until=NOW + timedelta(days=1))
     dispatcher.dispatch_message.assert_not_called()
-    for success in [False, True, False, False, False]:
+    for success in [False, True, True, True, True, True, False, False, False]:
         monitor.record(success=success, now=NOW, active_until=NOW + timedelta(days=1))
     keys = [call.args[0] for call in dispatcher.dispatch_message.call_args_list]
     assert len(keys) == 3
     assert keys[0] != keys[2]
 
 
+def test_unstable_successes_do_not_close_or_reannounce_the_same_incident():
+    store = MemoryHealth()
+    dispatcher = Mock()
+    dispatcher.dispatch_message.side_effect = lambda key, *a, **k: AlertOutcome(key, "sent", "ok")
+    monitor = HealthMonitor(store, dispatcher, 3)
+    for success in [False, False, False, True, True, True, True, False, True]:
+        monitor.record(success=success, now=NOW, active_until=NOW + timedelta(days=1))
+    assert dispatcher.dispatch_message.call_count == 1
+    assert store.state.successes == 1
+    for _ in range(4):
+        monitor.record(success=True, now=NOW, active_until=NOW + timedelta(days=1))
+    calls = dispatcher.dispatch_message.call_args_list
+    assert len(calls) == 2
+    assert calls[0].args[0].split(":")[-2] == calls[1].args[0].split(":")[-2]
+    assert "연속 정상 확인: 5회" in calls[1].args[1]
+
+
+def test_existing_health_payload_without_success_counter_remains_readable():
+    state = HealthSnapshot(failures=3, incident_id="a" * 32, since=1000, announced=True)
+    data = asdict(state)
+    data.pop("revision")
+    data.pop("successes")
+    client = Mock()
+    client.get_item.return_value = {
+        "Item": {"payload": {"S": json.dumps(data)}, "revision": {"N": "5"}}
+    }
+    restored = DynamoDBHealthStore(client, "table").load()
+    assert restored.successes == 0
+    assert restored.announced is True
+
+
+def test_recovery_progress_round_trips_without_changing_the_legacy_payload_schema():
+    client = Mock()
+    store = DynamoDBHealthStore(client, "table")
+    store.save(HealthSnapshot(failures=3, successes=2, incident_id="a" * 32), 1000)
+    written = client.update_item.call_args.kwargs["ExpressionAttributeValues"]
+    payload = json.loads(written[":payload"]["S"])
+    assert "successes" not in payload
+    client.get_item.return_value = {
+        "Item": {
+            "payload": written[":payload"],
+            "revision": written[":next"],
+            "recovery_progress": written[":progress"],
+        }
+    }
+    assert store.load().successes == 2
+    # A legacy writer advances revision but leaves the extra attribute untouched.
+    client.get_item.return_value["Item"]["revision"] = {"N": "2"}
+    assert store.load().successes == 0
+
+
 @pytest.mark.parametrize("status", ["deferred", "state_error"])
 def test_pending_recovery_survives_a_transient_delivery_failure(status):
     store = MemoryHealth()
     dispatcher = Mock()
-    monitor = HealthMonitor(store, dispatcher, 2)
+    monitor = HealthMonitor(store, dispatcher, 2, recovery_threshold=1)
     dispatcher.dispatch_message.return_value = AlertOutcome("ops", "sent", "ok")
     for _ in range(2):
         monitor.record(success=False, now=NOW, active_until=NOW + timedelta(days=1))

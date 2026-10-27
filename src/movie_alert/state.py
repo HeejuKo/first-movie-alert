@@ -76,16 +76,24 @@ class DynamoDBPollLock:
             raise StateError("정기 조회 잠금을 확보하지 못했습니다.") from None
         return True
 
-    def release(self, owner: str) -> None:
+    def release(self, owner: str, *, not_before_epoch: int = 0) -> None:
         _nonempty_string(owner)
+        _integer(not_before_epoch, minimum=0)
+        names = {"#owner": "owner", "#lease": "lease_until"}
+        values = {":owner": {"S": owner}, ":available_at": _number(not_before_epoch)}
+        expression = "SET #lease = :available_at"
+        if not_before_epoch:
+            names["#expires"] = "expires_at"
+            values[":expires"] = _number(not_before_epoch + 86400)
+            expression += ", #expires = :expires"
         try:
             self._client.update_item(
                 TableName=self._table_name,
                 Key={"id": {"S": "polling-lock:v1"}},
-                UpdateExpression="SET #lease = :zero",
+                UpdateExpression=expression,
                 ConditionExpression="#owner = :owner",
-                ExpressionAttributeNames={"#owner": "owner", "#lease": "lease_until"},
-                ExpressionAttributeValues={":owner": {"S": owner}, ":zero": _number(0)},
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues=values,
             )
         except (ClientError, BotoCoreError):
             raise StateError("정기 조회 잠금을 안전하게 해제하지 못했습니다.") from None

@@ -35,6 +35,16 @@ def test_poll_lock_uses_separate_key_and_expiry_condition(client):
     assert "#expires" not in request["ConditionExpression"]
 
 
+def test_poll_backoff_is_owner_conditional_and_ttl_outlives_retry_after(client):
+    lock = DynamoDBPollLock(client, "table")
+    lock.release("request-1", not_before_epoch=5000)
+    request = client.update_item.call_args.kwargs
+    assert request["Key"] == {"id": {"S": "polling-lock:v1"}}
+    assert request["ConditionExpression"] == "#owner = :owner"
+    assert request["ExpressionAttributeValues"][":available_at"] == {"N": "5000"}
+    assert request["ExpressionAttributeValues"][":expires"] == {"N": str(5000 + 86400)}
+
+
 def test_competing_poll_skips_and_release_is_owner_conditional(client):
     lock = DynamoDBPollLock(client, "movie-alert-state")
     client.update_item.side_effect = [{}, conditional_failure(), {}]
@@ -44,7 +54,7 @@ def test_competing_poll_skips_and_release_is_owner_conditional(client):
     request = client.update_item.call_args.kwargs
     assert request["ConditionExpression"] == "#owner = :owner"
     assert request["ExpressionAttributeValues"][":owner"] == {"S": "request-1"}
-    assert request["ExpressionAttributeValues"][":zero"] == {"N": "0"}
+    assert request["ExpressionAttributeValues"][":available_at"] == {"N": "0"}
 
 
 @pytest.mark.parametrize("operation", ["acquire", "release"])

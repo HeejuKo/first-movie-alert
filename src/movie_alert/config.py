@@ -51,6 +51,7 @@ class WatchRule:
 class OperationsSettings:
     enabled: bool = False
     failure_threshold: int = 3
+    recovery_threshold: int = 5
 
 
 @dataclass(frozen=True)
@@ -157,8 +158,14 @@ def _read_toml(path: Path) -> dict[str, Any]:
 
 
 def _operations_settings(operations: object) -> OperationsSettings:
-    if not isinstance(operations, dict) or set(operations) - {"enabled", "failure_threshold"}:
-        raise ConfigError("[operations]에는 enabled와 failure_threshold만 지정할 수 있습니다.")
+    if not isinstance(operations, dict) or set(operations) - {
+        "enabled",
+        "failure_threshold",
+        "recovery_threshold",
+    }:
+        raise ConfigError(
+            "[operations]에는 enabled, failure_threshold, recovery_threshold만 지정할 수 있습니다."
+        )
     operations_enabled = operations.get("enabled", False)
     threshold = operations.get("failure_threshold", 3)
     if (
@@ -167,7 +174,10 @@ def _operations_settings(operations: object) -> OperationsSettings:
         or not 2 <= threshold <= 30
     ):
         raise ConfigError("운영 알림은 enabled bool과 2~30 범위의 failure_threshold가 필요합니다.")
-    return OperationsSettings(operations_enabled, threshold)
+    recovery = operations.get("recovery_threshold", 5)
+    if type(recovery) is not int or not 1 <= recovery <= 30:
+        raise ConfigError("recovery_threshold: 1~30 사이의 정수가 필요합니다.")
+    return OperationsSettings(operations_enabled, threshold, recovery)
 
 
 def _watch_tables(raw: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:

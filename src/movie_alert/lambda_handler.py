@@ -4,6 +4,7 @@ import logging
 import math
 import os
 import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -14,6 +15,8 @@ from movie_alert.application import create_provider, deliver_notifications, run_
 from movie_alert.config import AppConfig, ConfigError, load_config
 from movie_alert.notifier import NotificationError
 from movie_alert.pipeline import current_time
+from movie_alert.providers.base import ProviderError
+from movie_alert.providers.cgv_relay import relay_request_limit
 from movie_alert.runtime import (
     NotificationEnvironment,
     create_health_monitor,
@@ -40,6 +43,8 @@ def _query_budget(config: AppConfig) -> float:
     # HTTPX bounds individual phases, and relay fallback can make a second request.
     # Leave time for cleanup after the bounded request/retry sequence.
     attempts = config.http.max_retries + 1
+    if config.cgv.source == "mcp_relay":
+        return 4 * config.http.timeout_seconds * relay_request_limit(config.http.max_retries) + 10
     return 8 * config.http.timeout_seconds * attempts + 10
 
 
@@ -86,11 +91,27 @@ def _handle(event: dict[str, Any], context: LambdaContext, started: float) -> di
     owner = context.aws_request_id
     lease_seconds = math.ceil(context.get_remaining_time_in_millis() / 1000) + 60
     if not lock.acquire(owner, int(current_time().timestamp()), lease_seconds):
-        logger.info("중첩 호출 생략: request_id=%s", owner)
+        logger.info("다른 실행 또는 재조회 대기 중 호출 생략: request_id=%s", owner)
         return {"status": "skipped", "reason": "already_running", "checks": []}
+    next_poll_at = 0
+
+    def remember_backoff(error: ProviderError) -> None:
+        nonlocal next_poll_at
+        if error.retry_after_seconds > 0:
+            deadline = math.ceil(current_time().timestamp()) + error.retry_after_seconds
+            end = math.ceil(max(rule.active_until.timestamp() for rule in config.watches))
+            next_poll_at = max(next_poll_at, min(deadline, end))
+            logger.warning(
+                "Provider 재조회 대기: request_id=%s retry_after_seconds=%d",
+                owner,
+                next_poll_at - int(current_time().timestamp()),
+            )
+
     try:
         try:
-            result = _run_checks(config, context, started, notify, checks, environment)
+            result = _run_checks(
+                config, context, started, notify, checks, environment, remember_backoff
+            )
         except Exception:
             try:
                 _report_health(config, context, environment, success=False)
@@ -100,7 +121,10 @@ def _handle(event: dict[str, Any], context: LambdaContext, started: float) -> di
         _report_health(config, context, environment, success=True)
         return result
     finally:
-        lock.release(owner)
+        if next_poll_at:
+            lock.release(owner, not_before_epoch=next_poll_at)
+        else:
+            lock.release(owner)
 
 
 def _report_health(
@@ -116,7 +140,12 @@ def _report_health(
         logger.warning("운영 상태 기록 생략: reason=remaining_time")
         return
     with httpx.Client() as client:
-        monitor = create_health_monitor(environment, client, config.operations.failure_threshold)
+        monitor = create_health_monitor(
+            environment,
+            client,
+            config.operations.failure_threshold,
+            config.operations.recovery_threshold,
+        )
         outcome = monitor.record(
             success=success,
             now=current_time(),
@@ -133,6 +162,7 @@ def _run_checks(
     notify: bool,
     checks: int,
     environment: NotificationEnvironment | None,
+    on_provider_error: Callable[[ProviderError], None],
 ) -> dict[str, Any]:
     summaries = []
     failed = False
@@ -158,6 +188,7 @@ def _run_checks(
                 can_query=lambda: (
                     context.get_remaining_time_in_millis() / 1000 >= _query_budget(config)
                 ),
+                on_provider_error=on_provider_error,
             )
             outcomes = []
             if environment is not None and not errors:

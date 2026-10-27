@@ -67,7 +67,10 @@ def create_poll_lock() -> DynamoDBPollLock:
 
 
 def create_health_monitor(
-    environment: NotificationEnvironment, client: httpx.Client, threshold: int
+    environment: NotificationEnvironment,
+    client: httpx.Client,
+    threshold: int,
+    recovery_threshold: int = 5,
 ) -> HealthMonitor:
     # Health reporting must fit in the remaining invocation budget, without SDK retries.
     dynamodb = _dynamodb_client(environment.region, timeout_seconds=2, max_attempts=1)
@@ -78,6 +81,7 @@ def create_health_monitor(
             DiscordNotifier(client, environment.webhook_url, 5),
         ),
         threshold,
+        recovery_threshold,
     )
 
 

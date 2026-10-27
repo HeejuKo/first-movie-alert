@@ -128,7 +128,7 @@ def test_relay_provider_retries_transient_error():
         provider = CgvRelayProvider(
             client,
             CgvSettings("A420", "08", source="mcp_relay"),
-            HttpSettings(),
+            HttpSettings(max_retries=2),
             sleep=delays.append,
         )
         assert len(provider.fetch_showtimes("30001367", "0056", date(2026, 10, 24))) == 1

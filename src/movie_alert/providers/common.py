@@ -1,6 +1,8 @@
 """Shared response validation and request settings for cinema providers."""
 
-from datetime import date
+import math
+from datetime import UTC, date, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -8,6 +10,21 @@ import httpx
 from movie_alert.providers.base import ResponseValidationError
 
 RETRYABLE_STATUSES = frozenset({500, 502, 503, 504})
+
+
+def retry_after_seconds(response: httpx.Response, *, now: datetime | None = None) -> int:
+    value = response.headers.get("Retry-After", "").strip()
+    if not value:
+        return 0
+    try:
+        if value.isascii() and value.isdigit():
+            return int(value)
+        deadline = parsedate_to_datetime(value)
+        if deadline.utcoffset() is not None:
+            return max(0, math.ceil((deadline - (now or datetime.now(UTC))).total_seconds()))
+    except (ValueError, TypeError, OverflowError):
+        pass
+    return 0
 
 
 def required_text(row: dict[str, Any], key: str, *, source: str) -> str:

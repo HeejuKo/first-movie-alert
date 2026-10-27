@@ -51,6 +51,7 @@ def run_live(
     now: datetime,
     *,
     can_query: Callable[[], bool] | None = None,
+    on_provider_error: Callable[[ProviderError], None] | None = None,
 ) -> tuple[list[Showtime], list[str]]:
     if now.utcoffset() is None:
         raise ValueError("now에는 시간대가 필요합니다.")
@@ -100,6 +101,8 @@ def run_live(
                         ProviderUnavailableError,
                         RateLimitError,
                     ) as error:
+                        if on_provider_error is not None:
+                            on_provider_error(error)
                         message = f"{rule.name} {show_date}: {error}"
                         logger.error("%s", message)
                         errors.append(message)
@@ -108,6 +111,8 @@ def run_live(
                             pending.cancel()
                         break
                     except ProviderError as error:
+                        if on_provider_error is not None:
+                            on_provider_error(error)
                         message = f"{rule.name} {show_date}: {error}"
                         logger.error("%s", message)
                         errors.append(message)
