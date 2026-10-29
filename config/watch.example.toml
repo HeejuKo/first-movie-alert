@@ -3,7 +3,7 @@
 # date_index: 아래 watch_defaults.dates 목록 순서 (0=10/28, 1=10/31, ...)
 [selection]
 branch_index = 2
-date_index = 1
+date_index = 2
 
 # 브라우저에서 확인한 요청의 값. 코드 의미와 다른 값의 지원 범위는 미확인.
 [cgv]
