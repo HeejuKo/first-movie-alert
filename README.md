@@ -4,6 +4,9 @@
 
 AWS에서 자동 실행되므로 노트북이 꺼져 있어도 감시를 계속한다. 현재는 CGV의 지점 하나와 날짜 하나를 선택해 1분마다 조회한다.
 
+<img width="588" height="352" alt="image" src="https://github.com/user-attachments/assets/c05ec521-8112-40db-af95-5009ab82d778" />
+
+
 ## 주요 기능
 
 - 설정 파일에서 영화·지점·날짜 선택
