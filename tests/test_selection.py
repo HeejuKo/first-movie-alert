@@ -13,16 +13,48 @@ EXAMPLE = Path(__file__).parents[1] / "config/watch.example.toml"
 NOW = datetime(2026, 10, 23, 12, tzinfo=SEOUL)
 
 
-def test_example_selects_one_candidate_by_its_indices():
+def test_example_selects_candidates_by_their_indices():
     raw = tomllib.loads(EXAMPLE.read_text())
     selection = raw["selection"]
-    candidate = {**raw["watch_defaults"], **raw["watches"][selection["branch_index"]]}
+    indices = selection.get("branch_indices", [selection.get("branch_index")])
     config = load_config(EXAMPLE)
-    assert len(config.watches) == 1
-    assert config.watches[0].branch_id == candidate["branch_id"]
-    assert config.watches[0].dates == (
-        date.fromisoformat(str(candidate["dates"][selection["date_index"]])),
+    assert len(config.watches) == len(indices)
+    for rule, index in zip(config.watches, indices, strict=True):
+        candidate = {**raw["watch_defaults"], **raw["watches"][index]}
+        assert rule.branch_id == candidate["branch_id"]
+        assert rule.dates == (date.fromisoformat(str(candidate["dates"][selection["date_index"]])),)
+
+
+def test_multiple_branches_query_only_the_selected_date(tmp_path, selection_text):
+    path = tmp_path / "watch.toml"
+    path.write_text(selection_text.replace("branch_index = 3", "branch_indices = [3, 2]"))
+    config = load_config(path)
+    assert [rule.branch_id for rule in config.watches] == ["0276", "0300"]
+    provider = Mock()
+    provider.fetch_showtimes.return_value = []
+    assert run_live(config, provider, NOW) == ([], [])
+    assert provider.fetch_showtimes.call_count == 2
+    assert {call.args for call in provider.fetch_showtimes.call_args_list} == {
+        ("30001367", "0276", date(2026, 10, 28)),
+        ("30001367", "0300", date(2026, 10, 28)),
+    }
+
+
+@pytest.mark.parametrize("indices", ["[]", "[2, 2]", "[-1, 2]", "[2, 6]", "[true]", '"2"', "[[]]"])
+def test_invalid_branch_lists_are_rejected(tmp_path, selection_text, indices):
+    path = tmp_path / "watch.toml"
+    path.write_text(selection_text.replace("branch_index = 3", f"branch_indices = {indices}"))
+    with pytest.raises(ConfigError, match="selection"):
+        load_config(path)
+
+
+def test_single_and_multiple_branch_selectors_cannot_be_mixed(tmp_path, selection_text):
+    path = tmp_path / "watch.toml"
+    path.write_text(
+        selection_text.replace("branch_index = 3", "branch_index = 3\nbranch_indices = [2, 3]")
     )
+    with pytest.raises(ConfigError, match="selection"):
+        load_config(path)
 
 
 def test_changing_both_indices_changes_the_only_query(tmp_path, selection_text):

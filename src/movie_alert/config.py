@@ -235,13 +235,33 @@ def _watch_rules(
         raise ConfigError("각 watch의 name은 고유해야 합니다.")
     if "selection" in raw:
         selection = raw["selection"]
-        if not isinstance(selection, dict) or set(selection) != {"branch_index", "date_index"}:
-            raise ConfigError("[selection]에는 branch_index와 date_index를 모두 지정하세요.")
-        branch_index = _index(selection, "branch_index", len(watches))
-        selected = {**defaults, **watches[branch_index]}
-        # Index the written list before _rule sorts/deduplicates its dates.
-        date_index = _index(selection, "date_index", len(selected["dates"]))
-        rules = (_rule({**selected, "dates": [selected["dates"][date_index]]}),)
+        if not isinstance(selection, dict) or set(selection) not in (
+            {"branch_index", "date_index"},
+            {"branch_indices", "date_index"},
+        ):
+            raise ConfigError(
+                "[selection]에는 branch_index 또는 branch_indices와 date_index를 지정하세요."
+            )
+        if "branch_index" in selection:
+            indices = [_index(selection, "branch_index", len(watches))]
+        else:
+            indices = selection["branch_indices"]
+            if (
+                not isinstance(indices, list)
+                or not indices
+                or any(type(index) is not int or not 0 <= index < len(watches) for index in indices)
+                or len(set(indices)) != len(indices)
+            ):
+                raise ConfigError(
+                    "[selection].branch_indices: 중복 없는 유효한 지점 번호 목록이 필요합니다."
+                )
+        selected_rules = []
+        for index in indices:
+            selected = {**defaults, **watches[index]}
+            # Index each branch's written dates before _rule sorts/deduplicates them.
+            date_index = _index(selection, "date_index", len(selected["dates"]))
+            selected_rules.append(_rule({**selected, "dates": [selected["dates"][date_index]]}))
+        rules = tuple(selected_rules)
     return rules
 
 
