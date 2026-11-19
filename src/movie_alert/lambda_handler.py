@@ -160,10 +160,11 @@ def _report_quota(
         return
     with httpx.Client() as client:
         dispatcher = create_dispatcher(environment, client, 5, 30 * 86400)
+        active_until = max(rule.active_until for rule in config.watches if rule.enabled)
         outcome = dispatcher.dispatch_message(
             budget.snapshot.notification_key,
-            quota_content(budget.snapshot, config.polling),
-            active_until=max(rule.active_until for rule in config.watches if rule.enabled),
+            quota_content(budget.snapshot, config.polling, active_until=active_until),
+            active_until=active_until,
         )
     logger.info("한도 중지 알림 결과: key=%s status=%s", outcome.key, outcome.status)
 

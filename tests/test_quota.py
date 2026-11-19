@@ -190,6 +190,14 @@ def test_crossing_midnight_in_one_execution_cannot_use_a_new_days_budget():
     assert counter.snapshot.used == 0
 
 
+def test_pause_notice_does_not_promise_a_restart_after_the_watch_period_ends():
+    counter = budget(used=3000)
+    end = (NOW + timedelta(days=1)).replace(hour=0, minute=0)
+    content = quota_content(counter.snapshot, SETTINGS, active_until=end)
+    assert "자동 재개하지 않습니다" in content
+    assert "다음 감시:" not in content
+
+
 def test_storage_failure_prevents_an_unaccounted_relay_request():
     counter = budget()
     counter.client = Mock()

@@ -2,7 +2,7 @@
 
 ### 원하는 영화·지점·날짜의 **가장 이른 상영 회차**를 발견하면 Discord로 알려주는 서비스
 
-AWS에서 자동 실행되므로 노트북이 꺼져 있어도 감시를 계속한다. 현재는 CGV의 지점 하나와 날짜 하나를 선택해 1분마다 조회한다.
+AWS에서 자동 실행되므로 노트북이 꺼져 있어도 감시를 계속한다. 현재는 CGV 성신여대입구·수유의 날짜 하나를 선택해 07:00~24:00 KST에 1분마다 조회한다.
 
 <img width="588" height="352" alt="image" src="https://github.com/user-attachments/assets/c05ec521-8112-40db-af95-5009ab82d778" />
 
@@ -12,7 +12,7 @@ AWS에서 자동 실행되므로 노트북이 꺼져 있어도 감시를 계속�
 - 설정 파일에서 영화·지점·날짜 선택
 - 첫 상영 회차 발견 시 Discord 알림
 - 같은 회차의 중복 알림 방지
-- 연속 조회·알림 처리 실패와 정상 복귀 알림
+- 장시간 연속 실패 알림과 일일 조회 한도 소진 시 중지 알림
 - GitHub Actions를 통한 코드·설정 자동 배포
 
 시간표 발견 알림은 **실제 예매 가능 여부를 보장하지 않는다.** 현재 알림에는 예매 가능 여부를 `미확인`으로 표시한다.
@@ -31,15 +31,17 @@ uv sync --locked
 
 ### 감시 대상 선택
 
-[config/watch.example.toml](config/watch.example.toml) 상단의 두 인덱스를 변경한다.
+[config/watch.example.toml](config/watch.example.toml) 상단의 지점 목록과 날짜 번호를 변경한다.
 
 ```toml
 [selection]
-branch_index = 3 # 수유
-date_index = 0   # dates 목록의 첫 번째 날짜
+branch_indices = [2, 3] # 성신여대입구·수유
+date_index = 8          # dates 목록의 아홉 번째 날짜
 ```
 
 번호는 **0부터 시작**한다. 지점 번호는 `[[watches]]`, 날짜 번호는 선택한 지점에 적용되는 `dates` 목록의 작성 순서를 따른다. 지점별 번호는 파일 상단 주석에서 확인할 수 있다.
+
+00:00~07:00에는 조회를 쉰다. Lambda의 일일 요청 예산 3,000회가 소진되거나 릴레이가 한도 소진을 응답하면 Discord로 한 번 알리고 다음 날 07:00에 재개한다. 감시 시간과 요청 예산은 `[polling]`에서 변경한다.
 
 영화·날짜 목록·감시 종료 시각(`active_until`)은 `[watch_defaults]`, 지점 이름과 ID는 `[[watches]]`에서 관리한다. 영화와 지점을 바꿀 때는 해당 이름과 ID를 함께 변경한다.
 

@@ -38,6 +38,8 @@ SDK 클라이언트는 실행 환경에서 재사용한다. 운영 상태 처리
 
 ## 적용할 IAM 권한
 
+야간 휴식과 일일 한도 중지는 의도된 생략이며 운영 장애로 세지 않는다. 한도 중지 알림은 일반 장애·복구 알림과 별개로 기존 전송 정책을 사용한다. 요청 예산·전송 키·로그와 다음 날 재개 절차는 [야간 휴식·일일 요청 예산](operations.md#6-야간-휴식두-지점일일-요청-예산)을 따른다. 일일 예산이나 중지 알림 기록을 삭제해 한도를 초기화하지 않는다.
+
 계정 번호를 치환한 로컬 JSON은 Git에서 제외한다. 다음 작업은 기존 개발 사용자에게 경계 정책 수정 권한이 없어 루트 콘솔에서 수행한다.
 
 1. 기존 고객 관리형 `MovieAlertRuntimeBoundary`를 [runtime-boundary.json.example](../infra/iam/runtime-boundary.json.example) 기준으로 갱신한다. `ReadCheckerHealth`는 `GetItem`을 `health:v1:checker`에만 허용하며 기존 권한은 유지한다. Lambda의 실제 역할 정책은 Terraform 배포에서 같은 읽기 권한을 추가한다.

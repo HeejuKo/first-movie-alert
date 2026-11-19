@@ -157,7 +157,9 @@ class DynamoDBRequestBudget:
                 raise DailyQuotaExceeded("릴레이가 일일 호출 한도 소진을 응답하여 감시를 쉽니다.")
 
 
-def quota_content(snapshot: QuotaSnapshot, settings: PollingSettings) -> str:
+def quota_content(
+    snapshot: QuotaSnapshot, settings: PollingSettings, *, active_until: datetime | None = None
+) -> str:
     resume = next_polling_start(
         datetime.combine(snapshot.day, datetime.min.time(), SEOUL), settings
     )
@@ -166,10 +168,14 @@ def quota_content(snapshot: QuotaSnapshot, settings: PollingSettings) -> str:
         if snapshot.remote_exhausted
         else f"오늘의 릴레이 요청 예산 {snapshot.limit:,}회를 모두 사용했습니다."
     )
+    restart = (
+        "감시 기간이 종료되므로 자동 재개하지 않습니다."
+        if active_until is not None and resume >= active_until
+        else f"다음 감시: {resume:%Y-%m-%d %H:%M} KST\n그때까지 시간표 조회를 쉽니다."
+    )
     return (
         "Movie Alert 감시 일시 중지\n"
         f"{reason}\n"
         f"봇 요청 예약: {snapshot.used:,}회 (재시도·영화 목록 확인 포함)\n"
-        f"다음 감시: {resume:%Y-%m-%d %H:%M} KST\n"
-        "그때까지 시간표 조회를 쉽니다."
+        f"{restart}"
     )
