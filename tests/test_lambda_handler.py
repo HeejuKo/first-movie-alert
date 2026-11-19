@@ -120,12 +120,16 @@ def test_real_notification_round_records_health_without_changing_query_result(
         entry,
         "load_config",
         lambda path: replace(
-            config, operations=OperationsSettings(enabled=True, failure_threshold=3)
+            config,
+            operations=OperationsSettings(
+                enabled=True, failure_threshold=30, notify_recovery=False
+            ),
         ),
     )
     monitor = Mock()
     monitor.record.return_value = None
-    monkeypatch.setattr(entry, "create_health_monitor", Mock(return_value=monitor))
+    factory = Mock(return_value=monitor)
+    monkeypatch.setattr(entry, "create_health_monitor", factory)
     if fails:
         runtime[0].return_value = ([], ["network timeout"])
         with pytest.raises(RuntimeError):
@@ -133,6 +137,8 @@ def test_real_notification_round_records_health_without_changing_query_result(
     else:
         assert entry.handler({"notify": True}, context)["status"] == "ok"
     assert monitor.record.call_args.kwargs["success"] is not fails
+    assert factory.call_args.args[2:] == (30, 5)
+    assert factory.call_args.kwargs == {"notify_recovery": False}
 
 
 def test_disabled_operational_alerts_do_not_create_monitor(context, runtime, monkeypatch):

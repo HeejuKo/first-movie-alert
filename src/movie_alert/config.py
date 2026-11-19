@@ -52,6 +52,7 @@ class OperationsSettings:
     enabled: bool = False
     failure_threshold: int = 3
     recovery_threshold: int = 5
+    notify_recovery: bool = True
 
 
 @dataclass(frozen=True)
@@ -162,9 +163,11 @@ def _operations_settings(operations: object) -> OperationsSettings:
         "enabled",
         "failure_threshold",
         "recovery_threshold",
+        "notify_recovery",
     }:
         raise ConfigError(
-            "[operations]에는 enabled, failure_threshold, recovery_threshold만 지정할 수 있습니다."
+            "[operations]에는 enabled, failure_threshold, recovery_threshold, "
+            "notify_recovery만 지정할 수 있습니다."
         )
     operations_enabled = operations.get("enabled", False)
     threshold = operations.get("failure_threshold", 3)
@@ -177,7 +180,10 @@ def _operations_settings(operations: object) -> OperationsSettings:
     recovery = operations.get("recovery_threshold", 5)
     if type(recovery) is not int or not 1 <= recovery <= 30:
         raise ConfigError("recovery_threshold: 1~30 사이의 정수가 필요합니다.")
-    return OperationsSettings(operations_enabled, threshold, recovery)
+    notify_recovery = operations.get("notify_recovery", True)
+    if type(notify_recovery) is not bool:
+        raise ConfigError("notify_recovery: bool이 필요합니다.")
+    return OperationsSettings(operations_enabled, threshold, recovery, notify_recovery)
 
 
 def _watch_tables(raw: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:

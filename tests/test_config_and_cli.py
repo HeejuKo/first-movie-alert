@@ -32,6 +32,8 @@ EXAMPLE = ROOT / "config/watch.example.toml"
         "recovery_threshold = 0",
         "recovery_threshold = 31",
         "recovery_threshold = true",
+        'notify_recovery = "false"',
+        "notify_recovery = 0",
     ],
 )
 def test_invalid_operations_configuration_is_rejected(tmp_path, config_text, settings):
@@ -39,6 +41,20 @@ def test_invalid_operations_configuration_is_rejected(tmp_path, config_text, set
     path.write_text(config_text + "\n[operations]\n" + settings + "\n")
     with pytest.raises(ConfigError):
         load_config(path)
+
+
+@pytest.mark.parametrize("notify_recovery", [True, False])
+def test_operational_recovery_can_be_configured_separately(tmp_path, config_text, notify_recovery):
+    path = tmp_path / "watch.toml"
+    path.write_text(
+        config_text + "\n[operations]\nenabled = true\nfailure_threshold = 30\n"
+        f"notify_recovery = {str(notify_recovery).lower()}\n"
+    )
+    operations = load_config(path).operations
+    assert operations.enabled is True
+    assert operations.failure_threshold == 30
+    assert operations.recovery_threshold == 5
+    assert operations.notify_recovery is notify_recovery
 
 
 @pytest.mark.parametrize(

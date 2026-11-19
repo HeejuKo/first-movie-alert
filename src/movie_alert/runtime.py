@@ -71,6 +71,8 @@ def create_health_monitor(
     client: httpx.Client,
     threshold: int,
     recovery_threshold: int = 5,
+    *,
+    notify_recovery: bool = True,
 ) -> HealthMonitor:
     # Health reporting must fit in the remaining invocation budget, without SDK retries.
     dynamodb = _dynamodb_client(environment.region, timeout_seconds=2, max_attempts=1)
@@ -82,6 +84,7 @@ def create_health_monitor(
         ),
         threshold,
         recovery_threshold,
+        notify_recovery=notify_recovery,
     )
 
 

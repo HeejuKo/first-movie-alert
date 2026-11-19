@@ -54,7 +54,9 @@ def test_health_sdk_is_reused_and_has_short_single_attempt_budget(monkeypatch):
     monkeypatch.setattr(runtime.boto3, "Session", factory)
     with httpx.Client() as client:
         for _ in range(3):
-            runtime.create_health_monitor(ENVIRONMENT, client, 3)
+            monitor = runtime.create_health_monitor(ENVIRONMENT, client, 30, notify_recovery=False)
+            assert monitor.threshold == 30
+            assert monitor.notify_recovery is False
     factory.assert_called_once()
     options = factory.return_value.client.call_args.kwargs["config"]
     assert options.connect_timeout == options.read_timeout == 2

@@ -203,11 +203,14 @@ class HealthMonitor:
         dispatcher: AlertDispatcher,
         threshold: int,
         recovery_threshold: int = 5,
+        *,
+        notify_recovery: bool = True,
     ) -> None:
         self.store = store
         self.dispatcher = dispatcher
         self.threshold = threshold
         self.recovery_threshold = recovery_threshold
+        self.notify_recovery = notify_recovery
 
     def record(
         self, *, success: bool, now: datetime, active_until: datetime
@@ -219,6 +222,15 @@ class HealthMonitor:
             threshold=self.threshold,
             recovery_threshold=self.recovery_threshold,
         )
+        event = state.pending
+        if event is not None:
+            # Apply current settings to pending events saved by an earlier deployment.
+            if (event.kind == "recovery" and not self.notify_recovery) or (
+                event.kind == "failure" and state.failures < self.threshold
+            ):
+                state = replace(state, pending=None)
+            elif event.kind == "failure" and event.failures < self.threshold:
+                state = replace(state, pending=replace(event, failures=state.failures))
         state = self.store.save(state, int(now.timestamp()))
         if state.pending is None:
             return None

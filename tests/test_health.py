@@ -9,6 +9,7 @@ from botocore.exceptions import ClientError
 from movie_alert.health import (
     HEALTH_KEY,
     DynamoDBHealthStore,
+    HealthEvent,
     HealthMonitor,
     HealthSnapshot,
     advance,
@@ -80,6 +81,86 @@ def test_unstable_successes_do_not_close_or_reannounce_the_same_incident():
     assert len(calls) == 2
     assert calls[0].args[0].split(":")[-2] == calls[1].args[0].split(":")[-2]
     assert "연속 정상 확인: 5회" in calls[1].args[1]
+
+
+def test_quiet_policy_waits_for_thirty_failures_and_closes_silently():
+    store = MemoryHealth()
+    dispatcher = Mock()
+    dispatcher.dispatch_message.side_effect = lambda key, *a, **k: AlertOutcome(key, "sent", "ok")
+    monitor = HealthMonitor(store, dispatcher, 30, notify_recovery=False)
+
+    def record(success, count):
+        for _ in range(count):
+            monitor.record(success=success, now=NOW, active_until=NOW + timedelta(days=1))
+
+    record(False, 29)
+    record(True, 1)
+    record(False, 29)
+    dispatcher.dispatch_message.assert_not_called()
+    record(False, 1)
+    dispatcher.dispatch_message.assert_called_once()
+    first = dispatcher.dispatch_message.call_args
+    assert first.args[0].endswith(":failure")
+    assert "30회 연속 실패" in first.args[1]
+    record(False, 3)
+    record(True, 4)
+    record(False, 1)
+    assert dispatcher.dispatch_message.call_count == 1
+    assert store.state.failures == 34
+    assert store.state.successes == 0
+    record(True, 5)
+    assert store.state.failures == 0
+    assert store.state.announced is False
+    assert store.state.pending is None
+    assert dispatcher.dispatch_message.call_count == 1
+    record(False, 30)
+    assert dispatcher.dispatch_message.call_count == 2
+    assert dispatcher.dispatch_message.call_args.args[0] != first.args[0]
+    assert dispatcher.dispatch_message.call_args.args[0].endswith(":failure")
+
+
+@pytest.mark.parametrize("success", [True, False])
+def test_disabling_recovery_also_discards_a_persisted_pending_recovery(success):
+    store = MemoryHealth()
+    store.state = HealthSnapshot(revision=1, pending=HealthEvent("a" * 32, "recovery", 1000, 3, 5))
+    dispatcher = Mock()
+    monitor = HealthMonitor(store, dispatcher, 30, notify_recovery=False)
+    assert monitor.record(success=success, now=NOW, active_until=NOW + timedelta(days=1)) is None
+    assert store.state.pending is None
+    dispatcher.dispatch_message.assert_not_called()
+
+
+@pytest.mark.parametrize("success", [True, False])
+def test_raised_threshold_discards_an_early_pending_failure(success):
+    store = MemoryHealth()
+    store.state = HealthSnapshot(
+        revision=1,
+        failures=3,
+        incident_id="a" * 32,
+        since=1000,
+        pending=HealthEvent("a" * 32, "failure", 1000, 3),
+    )
+    dispatcher = Mock()
+    monitor = HealthMonitor(store, dispatcher, 30, notify_recovery=False)
+    monitor.record(success=success, now=NOW, active_until=NOW + timedelta(days=1))
+    assert store.state.pending is None
+    dispatcher.dispatch_message.assert_not_called()
+
+
+def test_pending_failure_uses_the_new_threshold_without_changing_its_deduplication_key():
+    store = MemoryHealth()
+    pending = HealthEvent("a" * 32, "failure", 1000, 3)
+    store.state = HealthSnapshot(
+        revision=1, failures=29, incident_id="a" * 32, since=1000, pending=pending
+    )
+    dispatcher = Mock()
+    dispatcher.dispatch_message.return_value = AlertOutcome(pending.key, "sent", "ok")
+    monitor = HealthMonitor(store, dispatcher, 30, notify_recovery=False)
+    monitor.record(success=False, now=NOW, active_until=NOW + timedelta(days=1))
+    dispatcher.dispatch_message.assert_called_once()
+    assert dispatcher.dispatch_message.call_args.args[0] == pending.key
+    assert "30회 연속 실패" in dispatcher.dispatch_message.call_args.args[1]
+    assert store.state.announced is True
 
 
 def test_existing_health_payload_without_success_counter_remains_readable():

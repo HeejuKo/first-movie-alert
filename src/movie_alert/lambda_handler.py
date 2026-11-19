@@ -145,6 +145,7 @@ def _report_health(
             client,
             config.operations.failure_threshold,
             config.operations.recovery_threshold,
+            notify_recovery=config.operations.notify_recovery,
         )
         outcome = monitor.record(
             success=success,
