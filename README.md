@@ -2,7 +2,7 @@
 
 ### 원하는 영화·지점·날짜의 **가장 이른 상영 회차**를 발견하면 Discord로 알려주는 서비스
 
-AWS에서 자동 실행되므로 노트북이 꺼져 있어도 감시를 계속한다. 현재는 CGV 성신여대입구·수유의 날짜 하나를 선택해 07:00~24:00 KST에 1분마다 조회한다.
+AWS에서 자동 실행되므로 노트북이 꺼져 있어도 감시를 계속한다. 현재는 CGV 성신여대입구·홍대의 날짜 하나를 선택해 07:00~24:00 KST에 1분마다 조회한다.
 
 <img width="588" height="352" alt="image" src="https://github.com/user-attachments/assets/c05ec521-8112-40db-af95-5009ab82d778" />
 
@@ -35,7 +35,7 @@ uv sync --locked
 
 ```toml
 [selection]
-branch_indices = [2, 3] # 성신여대입구·수유
+branch_indices = [2, 5] # 성신여대입구·홍대
 date_index = 8          # dates 목록의 아홉 번째 날짜
 ```
 

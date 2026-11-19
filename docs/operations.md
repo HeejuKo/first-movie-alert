@@ -109,7 +109,7 @@ Python 테스트 391개·Ruff·패키징 검증을 통과했고 plan은 Lambda �
 
 ```toml
 [selection]
-branch_indices = [2, 3] # 성신여대입구·수유
+branch_indices = [2, 5] # 성신여대입구·홍대
 date_index = 8          # 현재 날짜 목록의 11/25
 
 [polling]
