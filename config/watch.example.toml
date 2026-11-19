@@ -25,6 +25,8 @@ max_parallel_requests = 3
 # Asia/Seoul 기준 07:00 이상, 다음 날 00:00 미만에만 조회한다.
 start_hour = 7
 end_hour = 24
+# Lambda에서 재시도·교차 확인까지 합산. 한도 소진 시 다음 날 07:00까지 쉰다.
+daily_request_limit = 3000
 
 # Lambda 실제 알림 모드에서만 연속 실패와 정상 복귀를 알린다.
 [operations]

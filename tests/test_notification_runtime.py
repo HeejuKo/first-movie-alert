@@ -9,7 +9,7 @@ import pytest
 from botocore.exceptions import NoRegionError
 
 from movie_alert import application
-from movie_alert.config import ConfigError
+from movie_alert.config import ConfigError, PollingSettings
 from movie_alert.models import SEOUL, BookingStatus
 from movie_alert.notifier import DiscordNotifier
 from movie_alert.outcomes import AlertOutcome
@@ -59,6 +59,21 @@ def test_health_sdk_is_reused_and_has_short_single_attempt_budget(monkeypatch):
             assert monitor.notify_recovery is False
     factory.assert_called_once()
     options = factory.return_value.client.call_args.kwargs["config"]
+    assert options.connect_timeout == options.read_timeout == 2
+    assert options.retries["total_max_attempts"] == 1
+
+
+def test_daily_budget_reuses_the_bounded_sdk_without_new_read_permissions(monkeypatch):
+    client = Mock()
+    session = Mock(return_value=Mock(client=Mock(return_value=client)))
+    monkeypatch.setattr(runtime.boto3, "Session", session)
+    monkeypatch.setenv("MOVIE_ALERT_DYNAMODB_TABLE", ENVIRONMENT.table_name)
+    monkeypatch.setenv("AWS_REGION", ENVIRONMENT.region)
+    counter = runtime.create_request_budget(PollingSettings(7, 24, 3000))
+    assert counter.client is client
+    assert counter.table == ENVIRONMENT.table_name
+    client.get_item.assert_not_called()
+    options = session.return_value.client.call_args.kwargs["config"]
     assert options.connect_timeout == options.read_timeout == 2
     assert options.retries["total_max_attempts"] == 1
 

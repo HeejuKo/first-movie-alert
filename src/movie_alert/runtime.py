@@ -9,10 +9,11 @@ import httpx
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError
 
-from movie_alert.config import ConfigError
+from movie_alert.config import ConfigError, PollingSettings
 from movie_alert.health import DynamoDBHealthStore, HealthMonitor
 from movie_alert.notifier import DiscordNotifier
 from movie_alert.pipeline import AlertDispatcher
+from movie_alert.quota import DynamoDBRequestBudget
 from movie_alert.state import DynamoDBClient, DynamoDBPollLock, DynamoDBStateStore
 
 
@@ -85,6 +86,18 @@ def create_health_monitor(
         threshold,
         recovery_threshold,
         notify_recovery=notify_recovery,
+    )
+
+
+def create_request_budget(settings: PollingSettings) -> DynamoDBRequestBudget:
+    table = os.environ.get("MOVIE_ALERT_DYNAMODB_TABLE", "").strip()
+    region = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "")).strip()
+    if not table or not region:
+        raise ConfigError(
+            "Lambda 요청 예산에는 MOVIE_ALERT_DYNAMODB_TABLE과 AWS_REGION이 필요합니다."
+        )
+    return DynamoDBRequestBudget(
+        _dynamodb_client(region, timeout_seconds=2, max_attempts=1), table, settings
     )
 
 

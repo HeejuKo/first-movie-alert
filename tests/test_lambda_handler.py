@@ -11,6 +11,7 @@ from movie_alert.config import HttpSettings, PollingSettings
 from movie_alert.models import SEOUL
 from movie_alert.outcomes import AlertOutcome
 from movie_alert.providers.base import ProviderUnavailableError
+from movie_alert.quota import QuotaSnapshot
 
 NOW = datetime(2026, 10, 23, 12, tzinfo=SEOUL)
 
@@ -89,6 +90,105 @@ def test_midnight_between_checks_prevents_a_second_query(
     result = entry.handler({"checks": 2}, context)
     assert len(result["checks"]) == 1
     runtime[0].assert_called_once()
+
+
+@pytest.fixture
+def quota_runtime(context, runtime, config, monkeypatch):
+    configured = replace(config, polling=PollingSettings(7, 24, 3000))
+    monkeypatch.setattr(entry, "load_config", lambda path: configured)
+    budget = Mock()
+    budget.snapshot = QuotaSnapshot(NOW.date(), 3000, 3000)
+    budget.load.return_value = budget.snapshot
+    monkeypatch.setattr(entry, "create_request_budget", Mock(return_value=budget))
+    dispatcher = Mock()
+    dispatcher.dispatch_message.return_value = AlertOutcome("quota", "sent", "ok")
+    monkeypatch.setattr(entry, "create_dispatcher", Mock(return_value=dispatcher))
+    health = Mock()
+    monkeypatch.setattr(entry, "_report_health", health)
+    return budget, dispatcher, health
+
+
+def test_exhausted_budget_skips_queries_and_does_not_record_a_health_failure(
+    context, runtime, quota_runtime, polling_lock
+):
+    budget, dispatcher, health = quota_runtime
+    assert entry.handler({"notify": True}, context) == {
+        "status": "skipped",
+        "reason": "daily_limit",
+        "checks": [],
+    }
+    runtime[0].assert_not_called()
+    dispatcher.dispatch_message.assert_called_once()
+    assert dispatcher.dispatch_message.call_args.args[0] == budget.snapshot.notification_key
+    assert "2026-10-24 07:00 KST" in dispatcher.dispatch_message.call_args.args[1]
+    health.assert_not_called()
+    polling_lock.release.assert_called_once_with("test-request")
+
+
+def test_last_allowed_query_delivers_showtimes_before_pausing(
+    context, runtime, quota_runtime, showtimes
+):
+    budget, dispatcher, health = quota_runtime
+    budget.snapshot = QuotaSnapshot(NOW.date(), 2999, 3000)
+    budget.load.return_value = budget.snapshot
+
+    def query(*args, **kwargs):
+        budget.snapshot = QuotaSnapshot(NOW.date(), 3000, 3000)
+        return showtimes[:1], []
+
+    runtime[0].side_effect = query
+    result = entry.handler({"notify": True, "checks": 2}, context)
+    assert result["status"] == "paused"
+    assert len(result["checks"]) == 1
+    runtime[1].assert_called_once()
+    dispatcher.dispatch_message.assert_called_once()
+    health.assert_not_called()
+    assert entry.create_provider.call_args.kwargs["request_control"] is budget
+
+
+def test_quota_notice_failure_keeps_the_pause_and_retries_the_same_daily_key(
+    context, runtime, quota_runtime, polling_lock
+):
+    budget, dispatcher, health = quota_runtime
+    dispatcher.dispatch_message.side_effect = [
+        AlertOutcome("quota", "deferred", "retry later"),
+        AlertOutcome("quota", "sent", "ok"),
+    ]
+    for _ in range(2):
+        assert entry.handler({"notify": True}, context)["reason"] == "daily_limit"
+    assert dispatcher.dispatch_message.call_count == 2
+    assert {call.args[0] for call in dispatcher.dispatch_message.call_args_list} == {
+        budget.snapshot.notification_key
+    }
+    runtime[0].assert_not_called()
+    health.assert_not_called()
+    assert polling_lock.release.call_count == 2
+
+
+def test_quota_notice_does_not_send_discord_without_explicit_notify(
+    context, runtime, quota_runtime
+):
+    _, dispatcher, _ = quota_runtime
+    assert entry.handler({}, context)["reason"] == "daily_limit"
+    dispatcher.dispatch_message.assert_not_called()
+
+
+def test_quota_notice_reuses_delivery_deduplication_across_paused_invocations(
+    context, runtime, quota_runtime, monkeypatch
+):
+    from movie_alert.notifier import DeliveryReceipt
+    from movie_alert.pipeline import AlertDispatcher
+
+    state = Mock()
+    state.claim.side_effect = [True, False]
+    notifier = Mock()
+    notifier.send_text.return_value = DeliveryReceipt("123")
+    dispatcher = AlertDispatcher(state, notifier, clock=lambda: NOW)
+    monkeypatch.setattr(entry, "create_dispatcher", lambda *args: dispatcher)
+    for _ in range(2):
+        assert entry.handler({"notify": True}, context)["reason"] == "daily_limit"
+    notifier.send_text.assert_called_once()
+    state.mark_sent.assert_called_once()
 
 
 def test_relay_retry_configuration_still_fits_the_lambda_budget(

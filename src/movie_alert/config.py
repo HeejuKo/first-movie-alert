@@ -59,6 +59,7 @@ class OperationsSettings:
 class PollingSettings:
     start_hour: int = 0
     end_hour: int = 24
+    daily_request_limit: int = 0
 
 
 @dataclass(frozen=True)
@@ -208,12 +209,21 @@ def _watch_tables(raw: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, A
 
 
 def _polling_settings(value: object) -> PollingSettings:
-    if not isinstance(value, dict) or set(value) - {"start_hour", "end_hour"}:
-        raise ConfigError("[polling]에는 start_hour, end_hour만 지정할 수 있습니다.")
+    if not isinstance(value, dict) or set(value) - {
+        "start_hour",
+        "end_hour",
+        "daily_request_limit",
+    }:
+        raise ConfigError(
+            "[polling]에는 start_hour, end_hour, daily_request_limit만 지정할 수 있습니다."
+        )
     start, end = value.get("start_hour", 0), value.get("end_hour", 24)
     if type(start) is not int or type(end) is not int or not 0 <= start < end <= 24:
         raise ConfigError("[polling]: 0 <= start_hour < end_hour <= 24인 정수가 필요합니다.")
-    return PollingSettings(start, end)
+    limit = value.get("daily_request_limit", 0)
+    if type(limit) is not int or not 0 <= limit <= 3000:
+        raise ConfigError("[polling].daily_request_limit: 0~3000 사이의 정수가 필요합니다.")
+    return PollingSettings(start, end, limit)
 
 
 def _http_settings(http: dict[str, Any]) -> HttpSettings:

@@ -18,10 +18,13 @@ from movie_alert.pipeline import current_time
 from movie_alert.polling import polling_allowed
 from movie_alert.providers.base import ProviderError
 from movie_alert.providers.cgv_relay import relay_request_limit
+from movie_alert.quota import DynamoDBRequestBudget, quota_content
 from movie_alert.runtime import (
     NotificationEnvironment,
+    create_dispatcher,
     create_health_monitor,
     create_poll_lock,
+    create_request_budget,
     notification_environment,
 )
 
@@ -98,6 +101,7 @@ def _handle(event: dict[str, Any], context: LambdaContext, started: float) -> di
         logger.info("다른 실행 또는 재조회 대기 중 호출 생략: request_id=%s", owner)
         return {"status": "skipped", "reason": "already_running", "checks": []}
     next_poll_at = 0
+    budget = None
 
     def remember_backoff(error: ProviderError) -> None:
         nonlocal next_poll_at
@@ -112,9 +116,14 @@ def _handle(event: dict[str, Any], context: LambdaContext, started: float) -> di
             )
 
     try:
+        if config.cgv.source == "mcp_relay" and config.polling.daily_request_limit:
+            budget = create_request_budget(config.polling)
+            if budget.load().exhausted:
+                logger.info("일일 조회 한도 소진으로 호출 생략: request_id=%s", owner)
+                return {"status": "skipped", "reason": "daily_limit", "checks": []}
         try:
             result = _run_checks(
-                config, context, started, notify, checks, environment, remember_backoff
+                config, context, started, notify, checks, environment, remember_backoff, budget
             )
         except Exception:
             try:
@@ -122,13 +131,41 @@ def _handle(event: dict[str, Any], context: LambdaContext, started: float) -> di
             except Exception as error:
                 logger.error("운영 상태 기록 실패: type=%s", type(error).__name__)
             raise
-        _report_health(config, context, environment, success=True)
+        if result["status"] == "ok":
+            _report_health(config, context, environment, success=True)
         return result
     finally:
-        if next_poll_at:
-            lock.release(owner, not_before_epoch=next_poll_at)
-        else:
-            lock.release(owner)
+        try:
+            if budget is not None and budget.snapshot.exhausted:
+                _report_quota(config, context, environment, budget)
+        except Exception as error:
+            logger.error("한도 중지 알림 처리 실패: type=%s", type(error).__name__)
+        finally:
+            if next_poll_at:
+                lock.release(owner, not_before_epoch=next_poll_at)
+            else:
+                lock.release(owner)
+
+
+def _report_quota(
+    config: AppConfig,
+    context: LambdaContext,
+    environment: NotificationEnvironment | None,
+    budget: DynamoDBRequestBudget,
+) -> None:
+    if environment is None:
+        return
+    if context.get_remaining_time_in_millis() < 80000:
+        logger.warning("한도 중지 알림 보류: reason=remaining_time")
+        return
+    with httpx.Client() as client:
+        dispatcher = create_dispatcher(environment, client, 5, 30 * 86400)
+        outcome = dispatcher.dispatch_message(
+            budget.snapshot.notification_key,
+            quota_content(budget.snapshot, config.polling),
+            active_until=max(rule.active_until for rule in config.watches if rule.enabled),
+        )
+    logger.info("한도 중지 알림 결과: key=%s status=%s", outcome.key, outcome.status)
 
 
 def _report_health(
@@ -168,6 +205,7 @@ def _run_checks(
     checks: int,
     environment: NotificationEnvironment | None,
     on_provider_error: Callable[[ProviderError], None],
+    budget: DynamoDBRequestBudget | None = None,
 ) -> dict[str, Any]:
     summaries = []
     failed = False
@@ -190,7 +228,7 @@ def _run_checks(
         with httpx.Client() as client:
             selected, errors = run_live(
                 config,
-                create_provider(config, client),
+                create_provider(config, client, request_control=budget),
                 current_time(),
                 can_query=lambda: (
                     context.get_remaining_time_in_millis() / 1000 >= _query_budget(config)
@@ -234,6 +272,12 @@ def _run_checks(
         if errors or any(outcome.is_failure for outcome in outcomes):
             failed = True
             break
+        if budget is not None and budget.snapshot.exhausted:
+            break
     if failed:
         raise NotificationError("조회·알림·상태 처리 오류가 발생했습니다.")
-    return {"status": "ok", "notify": notify, "checks": summaries}
+    return {
+        "status": "paused" if budget is not None and budget.snapshot.exhausted else "ok",
+        "notify": notify,
+        "checks": summaries,
+    }

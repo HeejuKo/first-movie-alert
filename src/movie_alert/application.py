@@ -16,21 +16,24 @@ from movie_alert.pipeline import block_reason, showtime_key
 from movie_alert.polling import polling_allowed
 from movie_alert.providers.base import (
     AccessDeniedError,
+    PollingPausedError,
     Provider,
     ProviderError,
     ProviderUnavailableError,
     RateLimitError,
 )
 from movie_alert.providers.cgv import CgvProvider
-from movie_alert.providers.cgv_relay import CgvRelayProvider
+from movie_alert.providers.cgv_relay import CgvRelayProvider, RelayRequestControl
 from movie_alert.runtime import NotificationEnvironment, create_dispatcher
 
 logger = logging.getLogger(__name__)
 
 
-def create_provider(config: AppConfig, client: httpx.Client) -> Provider:
+def create_provider(
+    config: AppConfig, client: httpx.Client, *, request_control: RelayRequestControl | None = None
+) -> Provider:
     if config.cgv.source == "mcp_relay":
-        return CgvRelayProvider(client, config.cgv, config.http)
+        return CgvRelayProvider(client, config.cgv, config.http, request_control=request_control)
     return CgvProvider(client, config.cgv, config.http)
 
 
@@ -98,8 +101,18 @@ def run_live(
                 }
                 for future in as_completed(futures):
                     index, rule = futures[future]
+                    if future.cancelled():
+                        continue
                     try:
                         fetched_by_rule[index] = (rule, future.result())
+                    except PollingPausedError as error:
+                        if on_provider_error is not None:
+                            on_provider_error(error)
+                        logger.info("조회 일시 중지: %s", error)
+                        stop_queries = True
+                        for pending in futures:
+                            pending.cancel()
+                        # Drain running peers so a final successful response can still notify.
                     except (
                         AccessDeniedError,
                         ProviderUnavailableError,

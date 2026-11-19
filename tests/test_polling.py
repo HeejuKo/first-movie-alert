@@ -39,6 +39,9 @@ def test_quiet_cli_does_not_query_or_report_a_provider_failure(config):
         "end_hour = 25",
         "start_hour = 7\nend_hour = 7",
         "unknown = 1",
+        "daily_request_limit = true",
+        "daily_request_limit = -1",
+        "daily_request_limit = 3001",
     ],
 )
 def test_invalid_polling_hours_fail_before_io(tmp_path, config_text, settings):

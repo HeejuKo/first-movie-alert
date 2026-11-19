@@ -26,6 +26,14 @@ class ProviderUnavailableError(ProviderError):
     """The provider service is unavailable, so related requests should stop."""
 
 
+class PollingPausedError(ProviderError):
+    """An intentional polling pause, rather than a failed provider query."""
+
+
+class DailyQuotaExceeded(PollingPausedError):
+    """No further relay requests are allowed during the current Korean day."""
+
+
 class Provider(Protocol):
     def fetch_showtimes(self, movie_id: str, branch_id: str, show_date: date) -> list[Showtime]:
         """Return a complete, validated schedule or raise ProviderError."""

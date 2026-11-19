@@ -9,7 +9,7 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from datetime import time as datetime_time
 from functools import partial
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 
@@ -161,6 +161,12 @@ def parse_relay_schedule(
     return showtimes
 
 
+class RelayRequestControl(Protocol):
+    def before_request(self) -> date: ...
+
+    def after_response(self, response: httpx.Response, day: date) -> None: ...
+
+
 class CgvRelayProvider:
     def __init__(
         self,
@@ -168,24 +174,34 @@ class CgvRelayProvider:
         settings: CgvSettings,
         http: HttpSettings,
         sleep: Callable[[float], None] = time.sleep,
+        *,
+        request_control: RelayRequestControl | None = None,
     ) -> None:
         self.client = client
         self.settings = settings
         self.http = http
         self.sleep = sleep
+        self.request_control = request_control
+
+    def _get(self, url: str, params: dict[str, str]) -> httpx.Response:
+        day = self.request_control.before_request() if self.request_control is not None else None
+        response = get_response(
+            self.client, url, params=params, timeout_seconds=self.http.timeout_seconds
+        )
+        if self.request_control is not None and day is not None:
+            self.request_control.after_response(response, day)
+        return response
 
     def _movie_is_listed(self, movie_id: str, branch_id: str, show_date: date) -> bool:
         """Cross-check a failed timetable without hiding errors as empty results."""
         started = time.monotonic()
         try:
-            response = get_response(
-                self.client,
+            response = self._get(
                 f"{self.settings.relay_base_url}{MOVIES_PATH}",
-                params={
+                {
                     "playDate": show_date.strftime("%Y%m%d"),
                     "theaterCode": branch_id,
                 },
-                timeout_seconds=self.http.timeout_seconds,
             )
         except httpx.RequestError as error:
             raise _network_error(
@@ -248,12 +264,7 @@ class CgvRelayProvider:
             remaining_requests -= 1
             started = time.monotonic()
             try:
-                response = get_response(
-                    self.client,
-                    url,
-                    params=params,
-                    timeout_seconds=self.http.timeout_seconds,
-                )
+                response = self._get(url, params)
             except httpx.RequestError as error:
                 elapsed = time.monotonic() - started
                 if isinstance(error, httpx.ReadTimeout) and remaining_requests:
