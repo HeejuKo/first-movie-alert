@@ -15,6 +15,7 @@ from movie_alert.application import create_provider, deliver_notifications, run_
 from movie_alert.config import AppConfig, ConfigError, load_config
 from movie_alert.notifier import NotificationError
 from movie_alert.pipeline import current_time
+from movie_alert.polling import polling_allowed
 from movie_alert.providers.base import ProviderError
 from movie_alert.providers.cgv_relay import relay_request_limit
 from movie_alert.runtime import (
@@ -86,6 +87,9 @@ def _handle(event: dict[str, Any], context: LambdaContext, started: float) -> di
     if not _active(config, now):
         logger.info("감시 기간 밖 호출 생략: request_id=%s", context.aws_request_id)
         return {"status": "skipped", "reason": "inactive", "checks": []}
+    if not polling_allowed(now, config.polling):
+        logger.info("감시 휴식 시간 호출 생략: request_id=%s", context.aws_request_id)
+        return {"status": "skipped", "reason": "quiet_hours", "checks": []}
     environment = notification_environment() if notify else None
     lock = create_poll_lock()
     owner = context.aws_request_id
@@ -178,7 +182,9 @@ def _run_checks(
             break
         if delay:
             time.sleep(delay)
-        if not _active(config, current_time()):
+        if not _active(config, current_time()) or not polling_allowed(
+            current_time(), config.polling
+        ):
             break
         round_started = time.monotonic()
         with httpx.Client() as client:

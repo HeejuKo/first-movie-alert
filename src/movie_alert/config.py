@@ -56,11 +56,18 @@ class OperationsSettings:
 
 
 @dataclass(frozen=True)
+class PollingSettings:
+    start_hour: int = 0
+    end_hour: int = 24
+
+
+@dataclass(frozen=True)
 class AppConfig:
     cgv: CgvSettings
     http: HttpSettings
     watches: tuple[WatchRule, ...]
     operations: OperationsSettings = OperationsSettings()
+    polling: PollingSettings = PollingSettings()
 
 
 def _text(table: dict[str, Any], key: str) -> str:
@@ -200,6 +207,15 @@ def _watch_tables(raw: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, A
     return defaults, watches
 
 
+def _polling_settings(value: object) -> PollingSettings:
+    if not isinstance(value, dict) or set(value) - {"start_hour", "end_hour"}:
+        raise ConfigError("[polling]에는 start_hour, end_hour만 지정할 수 있습니다.")
+    start, end = value.get("start_hour", 0), value.get("end_hour", 24)
+    if type(start) is not int or type(end) is not int or not 0 <= start < end <= 24:
+        raise ConfigError("[polling]: 0 <= start_hour < end_hour <= 24인 정수가 필요합니다.")
+    return PollingSettings(start, end)
+
+
 def _http_settings(http: dict[str, Any]) -> HttpSettings:
     timeout = http.get("timeout_seconds", 10.0)
     retries = http.get("max_retries", 1)
@@ -292,4 +308,5 @@ def load_config(path: Path) -> AppConfig:
         http=http_settings,
         watches=rules,
         operations=operations,
+        polling=_polling_settings(raw.get("polling", {})),
     )

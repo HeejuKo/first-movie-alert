@@ -7,7 +7,7 @@ import pytest
 
 from movie_alert import lambda_handler as entry
 from movie_alert.application import deliver_notifications, run_live
-from movie_alert.config import HttpSettings
+from movie_alert.config import HttpSettings, PollingSettings
 from movie_alert.models import SEOUL
 from movie_alert.outcomes import AlertOutcome
 from movie_alert.providers.base import ProviderUnavailableError
@@ -60,6 +60,35 @@ def test_default_checks_once_without_waiting(context, clock, runtime):
     assert len(result["checks"]) == 1
     runtime[0].assert_called_once()
     assert clock[0] == 0
+
+
+@pytest.mark.parametrize("hour", [0, 6])
+def test_night_pause_skips_aws_queries_and_health_reporting(
+    context, runtime, config, monkeypatch, polling_lock, hour
+):
+    configured = replace(config, polling=PollingSettings(7, 24))
+    monkeypatch.setattr(entry, "load_config", lambda path: configured)
+    monkeypatch.setattr(entry, "current_time", lambda: NOW.replace(hour=hour))
+    assert entry.handler({"notify": True}, context) == {
+        "status": "skipped",
+        "reason": "quiet_hours",
+        "checks": [],
+    }
+    for dependency in runtime:
+        dependency.assert_not_called()
+    polling_lock.acquire.assert_not_called()
+
+
+def test_midnight_between_checks_prevents_a_second_query(
+    context, clock, runtime, config, monkeypatch
+):
+    configured = replace(config, polling=PollingSettings(7, 24))
+    monkeypatch.setattr(entry, "load_config", lambda path: configured)
+    start = NOW.replace(hour=23, minute=59, second=50)
+    monkeypatch.setattr(entry, "current_time", lambda: start + timedelta(seconds=clock[0]))
+    result = entry.handler({"checks": 2}, context)
+    assert len(result["checks"]) == 1
+    runtime[0].assert_called_once()
 
 
 def test_relay_retry_configuration_still_fits_the_lambda_budget(

@@ -13,6 +13,7 @@ from movie_alert.config import AppConfig, WatchRule
 from movie_alert.models import SEOUL, Showtime
 from movie_alert.outcomes import AlertOutcome
 from movie_alert.pipeline import block_reason, showtime_key
+from movie_alert.polling import polling_allowed
 from movie_alert.providers.base import (
     AccessDeniedError,
     Provider,
@@ -56,6 +57,9 @@ def run_live(
     if now.utcoffset() is None:
         raise ValueError("now에는 시간대가 필요합니다.")
     now = now.astimezone(SEOUL)
+    if not polling_allowed(now, config.polling):
+        logger.info("감시 휴식 시간으로 조회를 생략합니다.")
+        return [], []
     results = []
     errors = []
     active_rules = [
